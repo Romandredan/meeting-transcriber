@@ -130,6 +130,9 @@ transformers>=4.46.0
 ```text
 # Токен HuggingFace для pyannote (примите условия pyannote/speaker-diarization-3.1)
 HF_TOKEN=
+# Сеть веб-интерфейса (дефолт-порт намеренно нечастый)
+APP_HOST=127.0.0.1
+APP_PORT=8473
 ```
 
 - [ ] **Step 5: Создать пустые `app/__init__.py`, `app/engine/__init__.py`, `tests/conftest.py`**
@@ -428,6 +431,11 @@ def test_paths_under_base():
     assert config.DB_PATH.name == "data.db"
 
 
+def test_default_port_not_8000():
+    assert config.APP_PORT == 8473
+    assert config.APP_HOST == "127.0.0.1"
+
+
 def test_ensure_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "INBOX_DIR", tmp_path / "inbox")
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "output")
@@ -471,6 +479,8 @@ def load_env() -> None:
 
 load_env()
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
+APP_HOST = os.environ.get("APP_HOST", "127.0.0.1")
+APP_PORT = int(os.environ.get("APP_PORT", "8473"))  # нечастый дефолт; меняется через .env
 
 
 def ensure_dirs() -> None:
@@ -2057,7 +2067,15 @@ watcher = InboxWatcher(
 watcher.start()
 
 app = create_app(conn, broker, settings_state)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    print(f"Открой http://{config.APP_HOST}:{config.APP_PORT}")
+    uvicorn.run(app, host=config.APP_HOST, port=config.APP_PORT)
 ```
+
+> Запуск через `python -m app.main` берёт хост/порт из `config` (а значит из `.env`/env). Реальная env-переменная `APP_PORT` имеет приоритет над `.env` (`load_env` использует `setdefault`).
 
 - [ ] **Step 5: Запустить unit-тесты api — пройдёт.** Run: `.venv/Scripts/python -m pytest tests/test_api.py -v` → PASS.
 
@@ -2264,8 +2282,8 @@ setInterval(refresh, 5000);
 
 - [ ] **Step 4: Smoke-проверка UI**
 
-Run: `.venv/Scripts/python -m uvicorn app.main:app --port 8000`
-Открыть `http://127.0.0.1:8000`. Ожидать: страница грузится, настройки читаются, очередь пуста. Остановить (Ctrl+C).
+Run: `.venv/Scripts/python -m app.main`
+Открыть напечатанный URL (по умолчанию `http://127.0.0.1:8473`). Ожидать: страница грузится, настройки читаются, очередь пуста. Остановить (Ctrl+C).
 
 - [ ] **Step 5: Commit**
 
@@ -2313,9 +2331,9 @@ copy .env.example .env   # вписать HF_TOKEN
 
 ## Запуск
 ```bash
-.venv/Scripts/python -m uvicorn app.main:app --port 8000
+.venv/Scripts/python -m app.main
 ```
-Открыть http://127.0.0.1:8000. Либо просто класть файлы в `inbox/`.
+Открыть напечатанный URL (по умолчанию http://127.0.0.1:8473; порт меняется в `.env` → `APP_PORT`). Либо просто класть файлы в `inbox/`.
 
 ## Тесты
 ```bash
@@ -2417,9 +2435,9 @@ Write-Host "Готово. Запуск: .\run.ps1" -ForegroundColor Cyan
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 if (-not (Test-Path ".\.venv\Scripts\python.exe")) { throw "venv не найден. Сначала запустите .\install.ps1" }
-$port = if ($args.Count -ge 1) { $args[0] } else { "8000" }
-Write-Host "Открой http://127.0.0.1:$port" -ForegroundColor Cyan
-& ".\.venv\Scripts\python.exe" -m uvicorn app.main:app --port $port
+# Необязательный аргумент-порт перекрывает .env/env; иначе хост/порт берутся из config (.env → APP_PORT, дефолт 8473)
+if ($args.Count -ge 1) { $env:APP_PORT = $args[0] }
+& ".\.venv\Scripts\python.exe" -m app.main
 ```
 
 - [ ] **Step 3: Написать `LICENSE` (MIT)**
@@ -2460,7 +2478,7 @@ cd meeting-transcriber
 # впишите HF_TOKEN в .env (для диаризации; без него работает транскрипция)
 .\run.ps1
 ```
-Открыть http://127.0.0.1:8000 или класть файлы в `inbox/`.
+Открыть напечатанный URL (по умолчанию http://127.0.0.1:8473; порт меняется в `.env` → `APP_PORT`, или `.\run.ps1 9000`) или класть файлы в `inbox/`.
 
 > Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-3.1`.
 
