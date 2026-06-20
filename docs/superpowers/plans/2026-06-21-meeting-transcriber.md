@@ -12,7 +12,8 @@
 
 - **Python ML-окружение:** отдельный venv на **Python 3.12** (системный 3.14 не имеет wheels ML-стека). Все ML-зависимости ставятся в него.
 - **GPU:** NVIDIA RTX 5070 Ti, 16 ГБ, Blackwell **sm_120** → PyTorch ставится из индекса **cu128** (`--index-url https://download.pytorch.org/whl/cu128`).
-- **Инференс:** `device="cuda"`, `compute_type="float16"`. Тихий откат на CPU считается провалом.
+- **Инференс:** устройство выбирается автодетектом (`app/device.py`): NVIDIA → `cuda`/`float16`, иначе CPU-фолбэк `cpu`/`int8`. На целевой машине автора тихий откат на CPU считается провалом (spike это проверяет); но публичная сборка обязана корректно работать и на CPU.
+- **Дистрибуция:** публичный GitHub-релиз через bootstrap-скрипты (`install.ps1`/`run.ps1`), цель v1 — Windows+NVIDIA с CPU-фолбэком. Запуск без HF-токена возможен (диаризация опциональна).
 - **Аудио для Whisper:** ровно `16 kHz mono PCM s16le` (`ffmpeg -ar 16000 -ac 1 -c:a pcm_s16le`). Не менять — это нативный вход Whisper.
 - **Очередь:** строго последовательная обработка, один файл за раз (одна модель грузит GPU целиком).
 - **Подача файлов:** по локальному пути или через watched-папку `inbox/`. Byte-upload в первой версии не делаем.
@@ -28,15 +29,19 @@
 ```
 meeting-transcriber/
   requirements-base.txt        # сервер: fastapi, uvicorn, watchdog, python-docx
-  requirements-ml.txt          # ML: torch(cu128), ctranslate2, faster-whisper, pyannote.audio, transformers
+  requirements-ml.txt          # ML: torch, ctranslate2, faster-whisper, pyannote.audio, transformers
   .env.example                 # HF_TOKEN=...
   .gitignore
+  LICENSE                      # MIT — для публичного релиза
   README.md
+  install.ps1                  # bootstrap: Python 3.12 + ffmpeg + детект GPU + venv + deps
+  run.ps1                      # запуск uvicorn в venv
   scripts/
     spike_gpu.py               # задача №1: проверка CT2/pyannote на Blackwell
   app/
     __init__.py
     config.py                  # пути, чтение .env, дефолты
+    device.py                  # автодетект устройства (cuda/float16 vs cpu/int8)
     models.py                  # Word, Segment, TranscriptResult, JobStatus, Settings
     db.py                      # SQLite: схема, соединение
     job_queue.py               # enqueue/claim/update/recovery
@@ -1043,6 +1048,78 @@ git commit -m "feat: writers (txt/srt/vtt/json/md/docx)"
 
 ---
 
+## Task 7A: Device auto-detection
+
+**Files:**
+- Create: `app/device.py`
+- Test: `tests/test_device.py`
+
+**Interfaces:**
+- `device.pick(force: str|None=None) -> tuple[str, str]` — возвращает `(device, compute_type)`: при доступной CUDA `("cuda","float16")`, иначе `("cpu","int8")`. `force` (`"cuda"`/`"cpu"`) перекрывает автодетект.
+- `device.torch_device(force: str|None=None) -> "torch.device"` — `torch.device` для pyannote/transformers.
+
+- [ ] **Step 1: Тест `tests/test_device.py`**
+
+```python
+from app import device
+
+
+def test_pick_force_cpu():
+    assert device.pick(force="cpu") == ("cpu", "int8")
+
+
+def test_pick_force_cuda():
+    assert device.pick(force="cuda") == ("cuda", "float16")
+
+
+def test_pick_auto_returns_known_pair():
+    dev, ct = device.pick()
+    assert (dev, ct) in {("cuda", "float16"), ("cpu", "int8")}
+```
+
+- [ ] **Step 2: Запустить — упадёт.** Run: `.venv/Scripts/python -m pytest tests/test_device.py -v` → FAIL.
+
+- [ ] **Step 3: Написать `app/device.py`**
+
+```python
+from __future__ import annotations
+
+
+def _cuda_available() -> bool:
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def pick(force: str | None = None) -> tuple[str, str]:
+    if force == "cpu":
+        return ("cpu", "int8")
+    if force == "cuda":
+        return ("cuda", "float16")
+    if _cuda_available():
+        return ("cuda", "float16")
+    return ("cpu", "int8")
+
+
+def torch_device(force: str | None = None):
+    import torch
+    dev, _ = pick(force)
+    return torch.device(dev)
+```
+
+- [ ] **Step 4: Запустить — пройдёт.** Run: `.venv/Scripts/python -m pytest tests/test_device.py -v` → PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app/device.py tests/test_device.py
+git commit -m "feat: автодетект устройства (cuda/float16 vs cpu/int8)"
+```
+
+---
+
 ## Task 8: Diarize wrapper + engine base + faster-whisper engine
 
 **Files:**
@@ -1147,13 +1224,12 @@ def _get_pipeline(hf_token: str | None):
     if hf_token is None:
         raise DiarizationError("Диаризация требует HF_TOKEN (pyannote). Укажите токен в .env.")
     if _PIPELINE is None:
-        import torch
         from pyannote.audio import Pipeline
+        from app.device import torch_device
         _PIPELINE = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
         )
-        if torch.cuda.is_available():
-            _PIPELINE.to(torch.device("cuda"))
+        _PIPELINE.to(torch_device())
     return _PIPELINE
 
 
@@ -1192,8 +1268,10 @@ class FasterWhisperEngine:
     def _get_model(self, model_name: str):
         if model_name not in self._models:
             from faster_whisper import WhisperModel
+            from app.device import pick
+            dev, compute_type = pick()
             self._models[model_name] = WhisperModel(
-                model_name, device="cuda", compute_type="float16",
+                model_name, device=dev, compute_type=compute_type,
                 download_root=str(config.MODELS_DIR),
             )
         return self._models[model_name]
@@ -1298,10 +1376,13 @@ class TransformersWhisperEngine:
         if model_name not in self._pipes:
             import torch
             from transformers import pipeline
+            from app.device import pick
             hf_id = _MODEL_MAP.get(model_name, model_name)
+            dev, _ = pick()
+            dtype = torch.float16 if dev == "cuda" else torch.float32
             self._pipes[model_name] = pipeline(
                 "automatic-speech-recognition", model=hf_id,
-                torch_dtype=torch.float16, device="cuda",
+                torch_dtype=dtype, device=dev,
             )
         return self._pipes[model_name]
 
@@ -2263,6 +2344,156 @@ git commit -m "docs: README + подтверждён сквозной прого
 
 ---
 
+## Task 16: Bootstrap-установщик и LICENSE (публичный релиз)
+
+**Files:**
+- Create: `install.ps1`, `run.ps1`, `LICENSE`
+- Modify: `README.md` (секция установки — заменить ручную на скриптовую + ручную как fallback)
+
+**Interfaces:**
+- `install.ps1`: проверяет Python 3.12 и ffmpeg (winget при отсутствии), детектит NVIDIA через `nvidia-smi` → выбирает torch-индекс (`cu128` или CPU), создаёт `.venv`, ставит зависимости, копирует `.env.example`→`.env`.
+- `run.ps1`: запускает `uvicorn app.main:app` из `.venv`.
+
+- [ ] **Step 1: Написать `install.ps1`**
+
+```powershell
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+Write-Host "== Meeting Transcriber: установка ==" -ForegroundColor Cyan
+
+function Has($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
+
+# 1. Python 3.12
+$py = $null
+foreach ($cand in @("py -3.12", "python3.12", "python")) {
+    $parts = $cand.Split(" ")
+    if (Has $parts[0]) {
+        $ver = & $parts[0] $parts[1..($parts.Length-1)] --version 2>$null
+        if ($ver -match "3\.12") { $py = $cand; break }
+    }
+}
+if (-not $py) {
+    Write-Host "Python 3.12 не найден. Ставлю через winget..." -ForegroundColor Yellow
+    if (Has winget) { winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements }
+    else { throw "Нет winget. Установите Python 3.12 вручную с python.org и перезапустите." }
+    $py = "py -3.12"
+}
+Write-Host "Python 3.12: $py"
+
+# 2. ffmpeg
+if (-not (Has ffmpeg)) {
+    Write-Host "ffmpeg не найден. Ставлю через winget..." -ForegroundColor Yellow
+    if (Has winget) { winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements }
+    else { throw "Нет winget. Установите ffmpeg вручную и добавьте в PATH." }
+}
+
+# 3. Детект GPU → выбор torch-индекса
+$torchIndex = "https://download.pytorch.org/whl/cpu"
+if (Has nvidia-smi) {
+    Write-Host "Обнаружена NVIDIA GPU → torch cu128" -ForegroundColor Green
+    $torchIndex = "https://download.pytorch.org/whl/cu128"
+} else {
+    Write-Host "NVIDIA не обнаружена → torch CPU (работа будет медленной)" -ForegroundColor Yellow
+}
+
+# 4. venv + зависимости
+$pyParts = $py.Split(" ")
+& $pyParts[0] $pyParts[1..($pyParts.Length-1)] -m venv .venv
+$venvPy = ".\.venv\Scripts\python.exe"
+& $venvPy -m pip install --upgrade pip
+& $venvPy -m pip install torch torchaudio --index-url $torchIndex
+& $venvPy -m pip install -r requirements-ml.txt
+& $venvPy -m pip install -r requirements-base.txt
+
+# 5. .env
+if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Создан .env — впишите HF_TOKEN для диаризации." -ForegroundColor Yellow }
+
+Write-Host "Готово. Запуск: .\run.ps1" -ForegroundColor Cyan
+```
+
+- [ ] **Step 2: Написать `run.ps1`**
+
+```powershell
+#Requires -Version 5.1
+$ErrorActionPreference = "Stop"
+if (-not (Test-Path ".\.venv\Scripts\python.exe")) { throw "venv не найден. Сначала запустите .\install.ps1" }
+$port = if ($args.Count -ge 1) { $args[0] } else { "8000" }
+Write-Host "Открой http://127.0.0.1:$port" -ForegroundColor Cyan
+& ".\.venv\Scripts\python.exe" -m uvicorn app.main:app --port $port
+```
+
+- [ ] **Step 3: Написать `LICENSE` (MIT)**
+
+```text
+MIT License
+
+Copyright (c) 2026 Roman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+- [ ] **Step 4: Обновить секцию «Установка» в `README.md`**
+
+Заменить ручную установку на:
+````markdown
+## Установка (Windows, рекомендуется)
+```powershell
+git clone <repo-url> meeting-transcriber
+cd meeting-transcriber
+.\install.ps1     # поставит Python 3.12/ffmpeg при необходимости, выберет torch под вашу GPU/CPU
+# впишите HF_TOKEN в .env (для диаризации; без него работает транскрипция)
+.\run.ps1
+```
+Открыть http://127.0.0.1:8000 или класть файлы в `inbox/`.
+
+> Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-3.1`.
+
+<details><summary>Ручная установка (если скрипт не подошёл)</summary>
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\pip install --upgrade pip
+.venv\Scripts\pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+.venv\Scripts\pip install -r requirements-ml.txt -r requirements-base.txt
+copy .env.example .env
+```
+</details>
+````
+
+- [ ] **Step 5: Smoke-проверка установщика на чистой копии**
+
+Run (в отдельной временной папке с клоном репо):
+```powershell
+.\install.ps1
+.\run.ps1
+```
+Expected: venv создаётся, зависимости ставятся, сервер поднимается, UI открывается. (На машине автора детектит NVIDIA → cu128.)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add install.ps1 run.ps1 LICENSE README.md
+git commit -m "feat: bootstrap-установщик (install.ps1/run.ps1), LICENSE, README для публичного релиза"
+```
+
+---
+
 ## Self-Review (выполнено при написании плана)
 
 **Spec coverage:**
@@ -2277,7 +2508,9 @@ git commit -m "docs: README + подтверждён сквозной прого
 - §4 обработка ошибок (ffmpeg/нет аудио/OOM/рестарт) → Task 5 (FFmpegError), Task 11 (try/except), Task 4 (recover_stuck), Task 13 (main recovery). ✓
 - §7 словарь 224 токена → Task 8 (truncate_prompt), Task 14 (предупреждение в UI). ✓
 - §9 тестирование (writers/queue/ffmpeg/watcher + интеграционный) → Tasks 4,5,7,12 + Task 15 Step 3. ✓
-- §11 YAGNI (нет upload, нет параллелизма, нет find/replace) — соблюдено. ✓
+- §6 автодетект устройства + CPU-фолбэк → Task 7A (`device.py`), используется в Tasks 8/9. ✓
+- §12 дистрибуция (bootstrap-скрипты, детект GPU, CPU-фолбэк, LICENSE, запуск без токена) → Task 16 + Task 8 (diarize опционален). ✓
+- §11 YAGNI (нет upload, нет параллелизма, нет find/replace, Linux вне v1) — соблюдено. ✓
 
 **Placeholder scan:** плейсхолдеров (TBD/TODO/«аналогично Task N») нет; код приведён полностью.
 
