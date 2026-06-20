@@ -1,0 +1,20 @@
+* { box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+header { padding: 16px 24px; background: #161a22; border-bottom: 1px solid #262b36; }
+h1 { margin: 0; font-size: 20px; }
+main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 24px; }
+section { background: #161a22; border: 1px solid #262b36; border-radius: 10px; padding: 16px; }
+#queue { grid-column: 1 / -1; }
+label { display: block; margin: 8px 0; font-size: 14px; }
+input, select, textarea { width: 100%; background: #0f1115; color: #e6e6e6; border: 1px solid #2c3340; border-radius: 6px; padding: 6px; }
+input[type=checkbox] { width: auto; }
+button { background: #3b82f6; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; margin-top: 8px; }
+#drop { border: 2px dashed #2c3340; border-radius: 8px; padding: 24px; text-align: center; color: #9aa4b2; }
+#drop.over { border-color: #3b82f6; color: #cfe0ff; }
+.job { border: 1px solid #262b36; border-radius: 8px; padding: 12px; margin: 8px 0; }
+.bar { height: 8px; background: #0f1115; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.bar > i { display: block; height: 100%; background: #3b82f6; width: 0; transition: width .3s; }
+.status-done .bar > i { background: #22c55e; }
+.status-error { border-color: #ef4444; }
+.hint { color: #9aa4b2; font-size: 13px; }
+a { color: #8ab4ff; margin-right: 10px; }

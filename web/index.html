@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Транскрибатор встреч</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header><h1>Транскрибатор встреч</h1></header>
+  <main>
+    <section id="settings">
+      <h2>Настройки</h2>
+      <label>Модель
+        <select id="model">
+          <option value="large-v3-turbo">large-v3-turbo</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+      </label>
+      <label>Язык <input id="language" placeholder="авто (пусто) / ru"></label>
+      <label><input type="checkbox" id="diarize" checked> Диаризация</label>
+      <label>Число спикеров <input id="num_speakers" type="number" min="1" placeholder="авто"></label>
+      <label>Словарь (≤ ~224 токена; смещает распознавание, не гарантирует)
+        <textarea id="vocabulary" rows="3" placeholder="АккордПост, ОФД, ..."></textarea>
+      </label>
+      <fieldset><legend>Форматы вывода</legend>
+        <label><input type="checkbox" class="fmt" value="txt" checked> TXT</label>
+        <label><input type="checkbox" class="fmt" value="srt" checked> SRT</label>
+        <label><input type="checkbox" class="fmt" value="vtt" checked> VTT</label>
+        <label><input type="checkbox" class="fmt" value="json" checked> JSON</label>
+        <label><input type="checkbox" class="fmt" value="md" checked> MD</label>
+        <label><input type="checkbox" class="fmt" value="docx" checked> DOCX</label>
+      </fieldset>
+      <button id="save-settings">Сохранить настройки</button>
+    </section>
+
+    <section id="add">
+      <h2>Добавить файлы</h2>
+      <div id="drop">Перетащите файлы сюда или вставьте пути ниже</div>
+      <textarea id="paths" rows="3" placeholder="C:\videos\meeting1.mp4 (по одному пути на строку)"></textarea>
+      <button id="add-paths">В очередь</button>
+      <p class="hint">Также можно просто положить файлы в папку <code>inbox/</code>.</p>
+    </section>
+
+    <section id="queue">
+      <h2>Очередь</h2>
+      <div id="jobs"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
