@@ -6,11 +6,11 @@
 
 **Architecture:** Один постоянно работающий процесс FastAPI: раздаёт SPA, держит SQLite-очередь, фоновый GPU-воркер (1 файл за раз) и файловый watcher за папкой `inbox/`. Движок — faster-whisper (нативные word-таймкоды) + pyannote-диаризация + своя сшивка слов со спикерами; PyTorch-native fallback, если CTranslate2 не возьмёт Blackwell. Подача файлов — по локальному пути (без byte-upload).
 
-**Tech Stack:** Python 3.12 (venv для ML), FastAPI + Uvicorn, vanilla-JS SPA, SQLite, faster-whisper + pyannote.audio (+ transformers как fallback), torch cu128, ffmpeg, python-docx, watchdog.
+**Tech Stack:** Python 3.10–3.13 (venv для ML; dev на 3.10), FastAPI + Uvicorn, vanilla-JS SPA, SQLite, faster-whisper + pyannote.audio (+ transformers как fallback), torch cu128, ffmpeg, python-docx, watchdog.
 
 ## Global Constraints
 
-- **Python ML-окружение:** отдельный venv на **Python 3.12** (системный 3.14 не имеет wheels ML-стека). Все ML-зависимости ставятся в него.
+- **Python ML-окружение:** отдельный venv на **Python 3.10–3.13** (системный 3.14 не имеет wheels ML-стека; разработка/проверка ведётся на 3.10). Все ML-зависимости ставятся в него. `install.ps1` предпочитает 3.12, но принимает любой 3.10–3.13.
 - **GPU:** NVIDIA RTX 5070 Ti, 16 ГБ, Blackwell **sm_120** → PyTorch ставится из индекса **cu128** (`--index-url https://download.pytorch.org/whl/cu128`).
 - **Инференс:** устройство выбирается автодетектом (`app/device.py`): NVIDIA → `cuda`/`float16`, иначе CPU-фолбэк `cpu`/`int8`. На целевой машине автора тихий откат на CPU считается провалом (spike это проверяет); но публичная сборка обязана корректно работать и на CPU.
 - **Дистрибуция:** публичный GitHub-релиз через bootstrap-скрипты (`install.ps1`/`run.ps1`), цель v1 — Windows+NVIDIA с CPU-фолбэком. Запуск без HF-токена возможен (диаризация опциональна).
@@ -147,9 +147,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 - [ ] **Step 6: Создать venv и поставить зависимости**
 
-Run:
+Run (любой Python 3.10–3.13; здесь 3.10):
 ```bash
-py -3.12 -m venv .venv
+py -3.10 -m venv .venv
 .venv/Scripts/python -m pip install --upgrade pip
 .venv/Scripts/pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 .venv/Scripts/pip install -r requirements-ml.txt
@@ -2311,7 +2311,7 @@ git commit -m "feat: фронтенд SPA (drag-drop по путям, очере
 
 ## Требования
 - Windows, NVIDIA GPU (проверено на RTX 5070 Ti, 16 ГБ).
-- Python 3.12 (отдельно от системного 3.14).
+- Python 3.10–3.13 (отдельно от системного 3.14).
 - ffmpeg в PATH.
 - HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-3.1`).
 
@@ -2381,22 +2381,18 @@ Write-Host "== Meeting Transcriber: установка ==" -ForegroundColor Cyan
 
 function Has($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
 
-# 1. Python 3.12
+# 1. Python 3.10–3.13 (предпочтительно 3.12)
 $py = $null
-foreach ($cand in @("py -3.12", "python3.12", "python")) {
-    $parts = $cand.Split(" ")
-    if (Has $parts[0]) {
-        $ver = & $parts[0] $parts[1..($parts.Length-1)] --version 2>$null
-        if ($ver -match "3\.12") { $py = $cand; break }
-    }
+foreach ($v in @("3.12", "3.11", "3.13", "3.10")) {
+    $ver = & py "-$v" --version 2>$null
+    if ($ver -match "3\.(1[0-3])") { $py = "py -$v"; break }
 }
 if (-not $py) {
-    Write-Host "Python 3.12 не найден. Ставлю через winget..." -ForegroundColor Yellow
-    if (Has winget) { winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements }
+    Write-Host "Python 3.10–3.13 не найден. Ставлю 3.12 через winget..." -ForegroundColor Yellow
+    if (Has winget) { winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements; $py = "py -3.12" }
     else { throw "Нет winget. Установите Python 3.12 вручную с python.org и перезапустите." }
-    $py = "py -3.12"
 }
-Write-Host "Python 3.12: $py"
+Write-Host "Python: $py"
 
 # 2. ffmpeg
 if (-not (Has ffmpeg)) {
