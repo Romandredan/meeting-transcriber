@@ -25,10 +25,15 @@ def _seg_label(seg: Segment) -> str:
     return humanize_speaker(seg.speaker)
 
 
+def _prefix(seg: Segment, diarized: bool) -> str:
+    """Возвращает 'Спикер N: ' если диаризация выполнена, иначе пустую строку."""
+    return f"{_seg_label(seg)}: " if diarized else ""
+
+
 def to_txt(result: TranscriptResult) -> str:
     lines = []
     for seg in result.segments:
-        lines.append(f"[{_hms(seg.start)}] {_seg_label(seg)}: {seg.text.strip()}")
+        lines.append(f"[{_hms(seg.start)}] {_prefix(seg, result.diarized)}{seg.text.strip()}")
     return "\n".join(lines) + "\n"
 
 
@@ -36,7 +41,7 @@ def to_srt(result: TranscriptResult) -> str:
     blocks = []
     for i, seg in enumerate(result.segments, 1):
         ts = f"{format_timestamp(seg.start, ',')} --> {format_timestamp(seg.end, ',')}"
-        text = f"{_seg_label(seg)}: {seg.text.strip()}"
+        text = f"{_prefix(seg, result.diarized)}{seg.text.strip()}"
         blocks.append(f"{i}\n{ts}\n{text}\n")
     return "\n".join(blocks)
 
@@ -45,7 +50,7 @@ def to_vtt(result: TranscriptResult) -> str:
     blocks = ["WEBVTT\n"]
     for seg in result.segments:
         ts = f"{format_timestamp(seg.start, '.')} --> {format_timestamp(seg.end, '.')}"
-        text = f"{_seg_label(seg)}: {seg.text.strip()}"
+        text = f"{_prefix(seg, result.diarized)}{seg.text.strip()}"
         blocks.append(f"{ts}\n{text}\n")
     return "\n".join(blocks)
 
@@ -60,7 +65,9 @@ def to_md(result: TranscriptResult) -> str:
              f"- Модель: {result.model}",
              f"- Диаризация: {'да' if result.diarized else 'нет'}\n"]
     for seg in result.segments:
-        lines.append(f"**[{_hms(seg.start)}] {_seg_label(seg)}:** {seg.text.strip()}\n")
+        pfx = _prefix(seg, result.diarized)
+        header = f"**[{_hms(seg.start)}] {pfx.rstrip()}**" if pfx else f"**[{_hms(seg.start)}]**"
+        lines.append(f"{header} {seg.text.strip()}\n")
     return "\n".join(lines)
 
 
@@ -72,7 +79,8 @@ def to_docx(result: TranscriptResult, path: str) -> None:
                       f"Диаризация: {'да' if result.diarized else 'нет'}")
     for seg in result.segments:
         p = doc.add_paragraph()
-        p.add_run(f"[{_hms(seg.start)}] {_seg_label(seg)}: ").bold = True
+        bold_part = f"[{_hms(seg.start)}] {_prefix(seg, result.diarized)}"
+        p.add_run(bold_part).bold = True
         p.add_run(seg.text.strip())
     doc.save(path)
 

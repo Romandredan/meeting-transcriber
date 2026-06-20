@@ -1,4 +1,7 @@
 from __future__ import annotations
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class DiarizationError(Exception):
@@ -33,3 +36,18 @@ def diarize_audio(audio_path: str, num_speakers: int | None,
     for segment, _, label in annotation.itertracks(yield_label=True):
         turns.append((float(segment.start), float(segment.end), str(label)))
     return turns
+
+
+def apply_diarization(segments, audio_path, num_speakers, hf_token) -> bool:
+    """Применяет диаризацию к сегментам. При недоступности (нет токена / ошибка GPU)
+    деградирует: логирует предупреждение, возвращает False, сегменты остаются без спикеров."""
+    try:
+        turns = diarize_audio(audio_path, num_speakers, hf_token)
+    except Exception as e:  # DiarizationError, ошибки GPU/модели и т.п.
+        _log.warning("Диаризация пропущена: %s", e)
+        return False
+    from app.stitch import assign_speakers, segment_speaker
+    for seg in segments:
+        assign_speakers(seg.words, turns)
+        seg.speaker = segment_speaker(seg.words)
+    return True

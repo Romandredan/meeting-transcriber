@@ -4,9 +4,8 @@
 
 ## Требования
 - Windows, NVIDIA GPU (проверено на RTX 5070 Ti, 16 ГБ).
-- Python 3.10–3.13 (отдельно от системного 3.14).
-- ffmpeg в PATH.
-- HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-3.1`).
+- Python 3.10–3.13 и ffmpeg — `install.ps1` устанавливает их автоматически через winget, если они не найдены.
+- HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-3.1`; без токена транскрипция работает, диаризация пропускается).
 
 ## Установка (Windows, рекомендуется)
 ```powershell

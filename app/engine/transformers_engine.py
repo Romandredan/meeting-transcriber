@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import Callable
 
 from app import config
-from app.engine.base import truncate_prompt
 from app.models import Segment, Settings, TranscriptResult, Word
-from app.stitch import assign_speakers, segment_speaker
 
 _MODEL_MAP = {
     "large-v3-turbo": "openai/whisper-large-v3-turbo",
@@ -37,10 +35,9 @@ class TransformersWhisperEngine:
                    progress: Callable[[str, float], None]) -> TranscriptResult:
         progress("transcribe", 0.1)
         pipe = self._get_pipe(settings.model)
-        prompt = truncate_prompt(settings.vocabulary) or None
+        # Смещение словаря (vocabulary biasing) не применяется в transformers-fallback:
+        # pipeline ожидает prompt_ids, а не строку prompt — пропускаем.
         generate_kwargs = {"language": settings.language} if settings.language else {}
-        if prompt:
-            generate_kwargs["prompt"] = prompt
         out = pipe(audio_path, return_timestamps="word", chunk_length_s=30,
                    batch_size=8, generate_kwargs=generate_kwargs)
         words = [Word(start=float(c["timestamp"][0] or 0.0),
@@ -56,12 +53,8 @@ class TransformersWhisperEngine:
         diarized = False
         if settings.diarize and segments:
             progress("diarize", 0.65)
-            from app.diarize import diarize_audio
-            turns = diarize_audio(audio_path, settings.num_speakers, config.HF_TOKEN)
-            for seg in segments:
-                assign_speakers(seg.words, turns)
-                seg.speaker = segment_speaker(seg.words)
-            diarized = True
+            from app.diarize import apply_diarization
+            diarized = apply_diarization(segments, audio_path, settings.num_speakers, config.HF_TOKEN)
         progress("diarize", 0.9)
 
         duration = segments[-1].end if segments else 0.0

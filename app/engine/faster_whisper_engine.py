@@ -5,7 +5,6 @@ from typing import Callable
 from app import config
 from app.engine.base import build_segments, truncate_prompt
 from app.models import Settings, TranscriptResult
-from app.stitch import assign_speakers, segment_speaker
 
 
 class FasterWhisperEngine:
@@ -41,14 +40,10 @@ class FasterWhisperEngine:
         progress("transcribe", 0.6)
 
         diarized = False
-        if settings.diarize:
+        if settings.diarize and segments:
             progress("diarize", 0.65)
-            from app.diarize import diarize_audio
-            turns = diarize_audio(audio_path, settings.num_speakers, config.HF_TOKEN)
-            for seg in segments:
-                assign_speakers(seg.words, turns)
-                seg.speaker = segment_speaker(seg.words)
-            diarized = True
+            from app.diarize import apply_diarization
+            diarized = apply_diarization(segments, audio_path, settings.num_speakers, config.HF_TOKEN)
         progress("diarize", 0.9)
 
         duration = segments[-1].end if segments else 0.0
