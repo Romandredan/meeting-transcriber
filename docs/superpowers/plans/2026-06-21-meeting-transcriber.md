@@ -1777,7 +1777,7 @@ def wait_until_stable(path: str, size_fn: Callable[[str], int] = os.path.getsize
     for _ in range(checks * 4):
         try:
             cur = size_fn(path)
-        except OSError:
+        except (OSError, StopIteration):
             return False
         if cur == last:
             stable += 1
