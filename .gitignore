@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+inbox/
+output/
+tmp/
+data.db
+data.db-*
+models/
+.pytest_cache/
+.superpowers/
