@@ -1477,7 +1477,7 @@ git commit -m "feat: transformers-fallback движок + фабрика выб�
 - Test: `tests/test_progress.py`
 
 **Interfaces:**
-- `class ProgressBroker`: `publish(job_id: int, stage: str, progress: float, status: str) -> None`; `subscribe() -> queue.Queue`; `unsubscribe(q) -> None`. Хранит последнее событие на job для late-subscribers через `snapshot() -> dict`.
+- `class ProgressBroker`: `publish(job_id: int, stage: str, progress: float, status: str) -> None`; `subscribe() -> queue.Queue`; `unsubscribe(q) -> None`. SSE несёт только живые дельты прогресса; текущее состояние при подключении фронтенд берёт из `GET /api/jobs` (Task 13/14), поэтому хранения «последнего события на job» не требуется (YAGNI).
 
 - [ ] **Step 1: Тест `tests/test_progress.py`**
 
