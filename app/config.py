@@ -4,12 +4,6 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-INBOX_DIR = BASE_DIR / "inbox"
-PROCESSED_DIR = BASE_DIR / "processed"  # сюда уезжают исходники из inbox после успеха
-OUTPUT_DIR = BASE_DIR / "output"
-TMP_DIR = BASE_DIR / "tmp"
-MODELS_DIR = BASE_DIR / "models"
-DB_PATH = BASE_DIR / "data.db"
 
 
 def load_env() -> None:
@@ -25,10 +19,39 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
+# .env читаем ДО вычисления путей, чтобы каталоги можно было переопределить в нём.
 load_env()
+
+
+def _dir(env_name: str, default: Path) -> Path:
+    """Каталог из переменной окружения или дефолт (под BASE_DIR)."""
+    value = os.environ.get(env_name)
+    return Path(value).expanduser() if value else default
+
+
+def _flag(env_name: str, default: bool) -> bool:
+    value = os.environ.get(env_name)
+    if value is None:
+        return default
+    return value.strip().lower() not in ("false", "0", "no", "off", "")
+
+
+# Пользовательские каталоги (можно переопределить в .env абсолютными путями).
+INBOX_DIR = _dir("INBOX_DIR", BASE_DIR / "inbox")          # папка для отслеживания
+OUTPUT_DIR = _dir("OUTPUT_DIR", BASE_DIR / "output")        # куда писать результаты
+PROCESSED_DIR = _dir("PROCESSED_DIR", BASE_DIR / "processed")  # куда уносить обработанные из inbox
+TMP_DIR = _dir("TMP_DIR", BASE_DIR / "tmp")
+MODELS_DIR = _dir("MODELS_DIR", BASE_DIR / "models")
+DB_PATH = _dir("DB_PATH", BASE_DIR / "data.db")
+
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
 APP_HOST = os.environ.get("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("APP_PORT", "8473"))  # нечастый дефолт; меняется через .env
+
+# Переносить ли исходник из inbox в processed после успешной обработки.
+# Выключи (MOVE_PROCESSED=false), если отслеживаешь свою «живую» папку записей
+# и не хочешь, чтобы оригиналы перемещались.
+MOVE_PROCESSED = _flag("MOVE_PROCESSED", True)
 
 # Watcher: файл из inbox ставится в очередь только когда размер И mtime
 # не менялись INBOX_QUIET_SECONDS подряд (защита от захвата ещё пишущегося/

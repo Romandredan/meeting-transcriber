@@ -25,7 +25,8 @@ stop_event = threading.Event()
 engine = make_engine("auto")
 worker = Worker(conn, broker, engine, settings_state.get_global,
                 settings_state.get_formats, str(config.TMP_DIR), str(config.OUTPUT_DIR),
-                inbox_dir=str(config.INBOX_DIR), processed_dir=str(config.PROCESSED_DIR))
+                inbox_dir=str(config.INBOX_DIR),
+                processed_dir=str(config.PROCESSED_DIR) if config.MOVE_PROCESSED else None)
 worker.start(stop_event)
 
 watcher = InboxWatcher(

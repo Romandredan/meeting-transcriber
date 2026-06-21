@@ -2,11 +2,33 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from app.models import Word
+from app.models import Segment, Word
 
 
 def _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> float:
     return max(0.0, min(a_end, b_end) - max(a_start, b_start))
+
+
+def merge_speaker_runs(segments: list[Segment]) -> list[Segment]:
+    """Склеивает подряд идущие сегменты одного спикера в одну реплику.
+
+    Таймкод объединённой реплики — от начала первого до конца последнего сегмента;
+    текст конкатенируется, слова сохраняются (детализация не теряется). Возвращает
+    новый список (входные сегменты не мутируются). Сегменты с speaker=None тоже
+    схлопываются по равенству None — поэтому применять имеет смысл к диаризованному
+    результату (для читаемого протокола TXT/MD/DOCX).
+    """
+    merged: list[Segment] = []
+    for seg in segments:
+        if merged and merged[-1].speaker == seg.speaker:
+            prev = merged[-1]
+            prev.end = seg.end
+            prev.text = (prev.text.rstrip() + " " + seg.text.lstrip()).strip()
+            prev.words = prev.words + list(seg.words)
+        else:
+            merged.append(Segment(seg.start, seg.end, seg.text.strip(),
+                                  seg.speaker, list(seg.words)))
+    return merged
 
 
 def assign_speakers(words: list[Word], turns: list[tuple[float, float, str]]) -> None:

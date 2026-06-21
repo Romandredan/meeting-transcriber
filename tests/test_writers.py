@@ -58,6 +58,30 @@ def test_to_txt_diarized_shows_speaker():
     assert "Спикер 1:" in txt
 
 
+def _three_segments_two_speakers():
+    s1 = Segment(0.0, 1.0, "раз", speaker="SPEAKER_00",
+                 words=[Word(0, 1, "раз", speaker="SPEAKER_00")])
+    s2 = Segment(1.0, 2.0, "два", speaker="SPEAKER_00",
+                 words=[Word(1, 2, "два", speaker="SPEAKER_00")])
+    s3 = Segment(2.0, 3.0, "три", speaker="SPEAKER_01",
+                 words=[Word(2, 3, "три", speaker="SPEAKER_01")])
+    return TranscriptResult("ru", 3.0, "large-v3", True, [s1, s2, s3])
+
+
+def test_to_txt_merges_consecutive_same_speaker():
+    """TXT склеивает подряд идущие реплики одного спикера в одну строку."""
+    txt = writers.to_txt(_three_segments_two_speakers())
+    assert txt.count("Спикер 1:") == 1      # две реплики SPEAKER_00 → одна строка
+    assert "раз два" in txt                 # тексты объединены
+    assert "Спикер 2:" in txt
+
+
+def test_to_srt_keeps_fine_grained_segments():
+    """Субтитры НЕ склеиваются — остаются мелкими (3 куска)."""
+    srt = writers.to_srt(_three_segments_two_speakers())
+    assert "1\n" in srt and "2\n" in srt and "3\n" in srt
+
+
 def test_write_all_creates_files(tmp_path):
     paths = writers.write_all(sample(), str(tmp_path), ["txt", "srt", "json"], "meeting")
     names = sorted(p.split("/")[-1].split("\\")[-1] for p in paths)

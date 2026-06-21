@@ -4,7 +4,14 @@ import json
 import os
 
 from app.models import TranscriptResult, Segment
-from app.stitch import humanize_speaker
+from app.stitch import humanize_speaker, merge_speaker_runs
+
+
+def _prose_segments(result: TranscriptResult) -> list[Segment]:
+    """Сегменты для читаемого протокола (TXT/MD/DOCX): при диаризации склеиваем
+    подряд идущие реплики одного спикера в одну; иначе — как есть (Whisper-сегменты).
+    Субтитры (SRT/VTT) и JSON используют исходные мелкие сегменты."""
+    return merge_speaker_runs(result.segments) if result.diarized else result.segments
 
 
 def format_timestamp(seconds: float, sep: str = ",") -> str:
@@ -32,7 +39,7 @@ def _prefix(seg: Segment, diarized: bool) -> str:
 
 def to_txt(result: TranscriptResult) -> str:
     lines = []
-    for seg in result.segments:
+    for seg in _prose_segments(result):
         lines.append(f"[{_hms(seg.start)}] {_prefix(seg, result.diarized)}{seg.text.strip()}")
     return "\n".join(lines) + "\n"
 
@@ -64,7 +71,7 @@ def to_md(result: TranscriptResult) -> str:
              f"- Язык: {result.language}",
              f"- Модель: {result.model}",
              f"- Диаризация: {'да' if result.diarized else 'нет'}\n"]
-    for seg in result.segments:
+    for seg in _prose_segments(result):
         pfx = _prefix(seg, result.diarized)
         header = f"**[{_hms(seg.start)}] {pfx.rstrip()}**" if pfx else f"**[{_hms(seg.start)}]**"
         lines.append(f"{header} {seg.text.strip()}\n")
@@ -77,7 +84,7 @@ def to_docx(result: TranscriptResult, path: str) -> None:
     doc.add_heading("Транскрипция встречи", level=1)
     doc.add_paragraph(f"Язык: {result.language} · Модель: {result.model} · "
                       f"Диаризация: {'да' if result.diarized else 'нет'}")
-    for seg in result.segments:
+    for seg in _prose_segments(result):
         p = doc.add_paragraph()
         bold_part = f"[{_hms(seg.start)}] {_prefix(seg, result.diarized)}"
         p.add_run(bold_part).bold = True

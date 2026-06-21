@@ -1,4 +1,4 @@
-from app.models import Word
+from app.models import Segment, Word
 from app import stitch
 
 
@@ -28,3 +28,23 @@ def test_humanize_speaker():
     assert stitch.humanize_speaker("SPEAKER_00") == "Спикер 1"
     assert stitch.humanize_speaker("SPEAKER_05") == "Спикер 6"
     assert stitch.humanize_speaker(None) == "Спикер ?"
+
+
+def test_merge_speaker_runs_collapses_consecutive():
+    segs = [
+        Segment(0.0, 1.0, "привет", speaker="SPEAKER_00",
+                words=[Word(0, 1, "привет", speaker="SPEAKER_00")]),
+        Segment(1.0, 2.0, "как дела", speaker="SPEAKER_00",
+                words=[Word(1, 2, "как", speaker="SPEAKER_00")]),
+        Segment(2.0, 3.0, "нормально", speaker="SPEAKER_01",
+                words=[Word(2, 3, "нормально", speaker="SPEAKER_01")]),
+    ]
+    merged = stitch.merge_speaker_runs(segs)
+    assert len(merged) == 2
+    assert merged[0].speaker == "SPEAKER_00"
+    assert merged[0].start == 0.0 and merged[0].end == 2.0
+    assert merged[0].text == "привет как дела"
+    assert len(merged[0].words) == 2          # слова сохранены
+    assert merged[1].speaker == "SPEAKER_01"
+    # вход не мутирован
+    assert len(segs) == 3 and segs[0].end == 1.0
