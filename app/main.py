@@ -5,21 +5,10 @@ import threading
 from app import config, db, job_queue
 from app.api import create_app
 from app.engine.factory import make_engine
-from app.models import Settings
 from app.progress import ProgressBroker
+from app.settings_store import SettingsStore
 from app.watcher import InboxWatcher
 from app.worker import Worker
-
-
-class SettingsState:
-    def __init__(self) -> None:
-        self._settings = Settings()
-        self._formats = ["txt", "srt", "vtt", "json", "md", "docx"]
-
-    def get_global(self): return self._settings
-    def set_global(self, s): self._settings = s
-    def get_formats(self): return list(self._formats)
-    def set_formats(self, f): self._formats = list(f)
 
 
 config.ensure_dirs()
@@ -30,7 +19,7 @@ if recovered:
     print(f"Восстановлено зависших job'ов: {recovered}")
 
 broker = ProgressBroker()
-settings_state = SettingsState()
+settings_state = SettingsStore(conn)  # переживает перезапуск (таблица settings)
 stop_event = threading.Event()
 
 engine = make_engine("auto")
