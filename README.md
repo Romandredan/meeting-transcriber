@@ -5,7 +5,7 @@
 ## Требования
 - Windows, NVIDIA GPU (проверено на RTX 5070 Ti, 16 ГБ).
 - Python 3.10–3.13 и ffmpeg — `install.ps1` устанавливает их автоматически через winget, если они не найдены.
-- HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-3.1`; без токена транскрипция работает, диаризация пропускается).
+- HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-community-1` тем же аккаунтом, что выдал токен; без токена транскрипция работает, диаризация просто пропускается).
 
 ## Установка (Windows, рекомендуется)
 ```powershell
@@ -17,7 +17,7 @@ cd meeting-transcriber
 ```
 Открыть напечатанный URL (по умолчанию http://127.0.0.1:8473; порт меняется в `.env` → `APP_PORT`, или `.\run.ps1 9000`) или класть файлы в `inbox/`.
 
-> Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-3.1`.
+> Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-community-1`.
 
 <details><summary>Ручная установка (если скрипт не подошёл)</summary>
 
