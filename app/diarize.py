@@ -18,14 +18,14 @@ def _get_pipeline(hf_token: str | None):
     if _PIPELINE is None:
         from pyannote.audio import Pipeline
         from app.device import torch_device
+        # pyannote 4.x: актуальный пайплайн — speaker-diarization-community-1.
+        # (Имя задаётся через env PYANNOTE_PIPELINE на случай смены версии/пайплайна.)
+        import os
+        model_id = os.environ.get("PYANNOTE_PIPELINE", "pyannote/speaker-diarization-community-1")
         try:
-            # pyannote >= 4.x использует token=
-            _PIPELINE = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1", token=hf_token)
+            _PIPELINE = Pipeline.from_pretrained(model_id, token=hf_token)  # pyannote >= 4.x
         except TypeError:
-            # pyannote < 4.x — устаревший use_auth_token=
-            _PIPELINE = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
+            _PIPELINE = Pipeline.from_pretrained(model_id, use_auth_token=hf_token)  # < 4.x
         _PIPELINE.to(torch_device())
     return _PIPELINE
 
@@ -60,7 +60,10 @@ def diarize_audio(audio_path: str, num_speakers: int | None,
     kwargs = {}
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
-    annotation = pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
+    result = pipeline({"waveform": waveform, "sample_rate": sr}, **kwargs)
+    # pyannote 4.x возвращает DiarizeOutput с .speaker_diarization (Annotation);
+    # 3.x — сразу Annotation. Берём аннотацию из того, что пришло.
+    annotation = getattr(result, "speaker_diarization", result)
     turns: list[tuple[float, float, str]] = []
     for segment, _, label in annotation.itertracks(yield_label=True):
         turns.append((float(segment.start), float(segment.end), str(label)))

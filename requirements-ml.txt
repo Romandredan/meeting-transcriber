@@ -1,5 +1,8 @@
 # Перед этим: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 ctranslate2>=4.5.0
 faster-whisper>=1.1.0
-pyannote.audio>=3.3.0
+# pyannote 4.x: 3.x несовместим с torchaudio из свежего torch (нет AudioMetaData).
+# Пайплайн — pyannote/speaker-diarization-community-1 (нужно принять условия на HF
+# тем же аккаунтом, что и токен). Имя меняется через env PYANNOTE_PIPELINE.
+pyannote.audio==4.0.4
 transformers>=4.46.0
