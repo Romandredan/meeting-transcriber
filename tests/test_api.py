@@ -36,6 +36,14 @@ def test_create_and_list_job(tmp_path):
     assert any(j["id"] == jid for j in lst)
 
 
+def test_create_job_strips_quotes_and_whitespace(tmp_path):
+    client, _ = make_client(tmp_path)
+    f = tmp_path / "rec.webm"; f.write_bytes(b"x")
+    # Путь как из «Копировать как путь» Проводника: в кавычках и с пробелами.
+    r = client.post("/api/jobs", json={"path": f'  "{f}"  ', "settings": {}})
+    assert r.status_code == 200
+
+
 def test_get_and_put_settings(tmp_path):
     client, _ = make_client(tmp_path)
     client.put("/api/settings", json={"settings": {"model": "large-v3"}, "formats": ["txt"]})

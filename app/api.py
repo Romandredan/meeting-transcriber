@@ -32,9 +32,13 @@ def create_app(conn, broker, settings_state) -> FastAPI:
 
     @app.post("/api/jobs")
     def create_job(body: JobIn):
-        if not os.path.isfile(body.path):
-            raise HTTPException(status_code=400, detail="Файл не найден по указанному пути")
-        jid = job_queue.enqueue(conn, body.path, json.dumps(body.settings))
+        # Нормализуем путь: убираем обрамляющие кавычки (Проводник «Копировать как путь»)
+        # и лишние пробелы/переводы строк.
+        path = body.path.strip().strip('"').strip("'").strip()
+        if not os.path.isfile(path):
+            raise HTTPException(status_code=400,
+                                detail=f"Файл не найден: {path} — укажите полный путь к существующему файлу")
+        jid = job_queue.enqueue(conn, path, json.dumps(body.settings))
         return {"id": jid}
 
     @app.get("/api/jobs")
