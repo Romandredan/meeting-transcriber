@@ -12,6 +12,36 @@ class FakeEngine:
         return TranscriptResult("ru", 1.0, settings.model, True, [s])
 
 
+def test_move_to_processed_moves_inbox_file_preserving_subpath(tmp_path):
+    inbox = tmp_path / "inbox"; processed = tmp_path / "processed"
+    inbox.mkdir(); processed.mkdir()
+    f = inbox / "sub" / "a.mp4"; f.parent.mkdir(); f.write_bytes(b"x")
+    dst = worker.move_to_processed(str(f), str(inbox), str(processed))
+    assert dst is not None
+    assert not f.exists()
+    assert (processed / "sub" / "a.mp4").exists()  # подпапка сохранена
+
+
+def test_move_to_processed_leaves_external_file_untouched(tmp_path):
+    inbox = tmp_path / "inbox"; processed = tmp_path / "processed"
+    inbox.mkdir(); processed.mkdir()
+    ext = tmp_path / "elsewhere" / "b.mp4"; ext.parent.mkdir(); ext.write_bytes(b"x")
+    dst = worker.move_to_processed(str(ext), str(inbox), str(processed))
+    assert dst is None
+    assert ext.exists()  # оригинал пользователя (добавлен по пути) не трогаем
+
+
+def test_move_to_processed_no_overwrite(tmp_path):
+    inbox = tmp_path / "inbox"; processed = tmp_path / "processed"
+    inbox.mkdir(); processed.mkdir()
+    (processed / "a.mp4").write_bytes(b"old")  # уже есть файл с таким именем
+    f = inbox / "a.mp4"; f.write_bytes(b"new")
+    dst = worker.move_to_processed(str(f), str(inbox), str(processed))
+    assert dst is not None
+    assert (processed / "a.mp4").read_bytes() == b"old"  # не перезаписан
+    assert (processed / "a.1.mp4").exists()  # новый ушёл с суффиксом
+
+
 def test_merge_settings_override():
     g = Settings(model="large-v3-turbo", diarize=True)
     merged = worker.merge_settings(g, {"model": "large-v3", "diarize": False})

@@ -24,12 +24,15 @@ stop_event = threading.Event()
 
 engine = make_engine("auto")
 worker = Worker(conn, broker, engine, settings_state.get_global,
-                settings_state.get_formats, str(config.TMP_DIR), str(config.OUTPUT_DIR))
+                settings_state.get_formats, str(config.TMP_DIR), str(config.OUTPUT_DIR),
+                inbox_dir=str(config.INBOX_DIR), processed_dir=str(config.PROCESSED_DIR))
 worker.start(stop_event)
 
 watcher = InboxWatcher(
     str(config.INBOX_DIR),
     enqueue_cb=lambda path: job_queue.enqueue(conn, path, "{}"),
+    quiet_seconds=config.INBOX_QUIET_SECONDS,
+    poll_seconds=config.INBOX_POLL_SECONDS,
 )
 watcher.start()
 

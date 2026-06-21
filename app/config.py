@@ -5,6 +5,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INBOX_DIR = BASE_DIR / "inbox"
+PROCESSED_DIR = BASE_DIR / "processed"  # сюда уезжают исходники из inbox после успеха
 OUTPUT_DIR = BASE_DIR / "output"
 TMP_DIR = BASE_DIR / "tmp"
 MODELS_DIR = BASE_DIR / "models"
@@ -29,7 +30,13 @@ HF_TOKEN = os.environ.get("HF_TOKEN") or None
 APP_HOST = os.environ.get("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("APP_PORT", "8473"))  # нечастый дефолт; меняется через .env
 
+# Watcher: файл из inbox ставится в очередь только когда размер И mtime
+# не менялись INBOX_QUIET_SECONDS подряд (защита от захвата ещё пишущегося/
+# стримящегося файла). Пока файл растёт — ждём без раннего отказа.
+INBOX_QUIET_SECONDS = float(os.environ.get("INBOX_QUIET_SECONDS", "15"))
+INBOX_POLL_SECONDS = float(os.environ.get("INBOX_POLL_SECONDS", "2"))
+
 
 def ensure_dirs() -> None:
-    for d in (INBOX_DIR, OUTPUT_DIR, TMP_DIR, MODELS_DIR):
+    for d in (INBOX_DIR, PROCESSED_DIR, OUTPUT_DIR, TMP_DIR, MODELS_DIR):
         d.mkdir(parents=True, exist_ok=True)
