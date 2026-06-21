@@ -8,5 +8,7 @@ tmp/
 data.db
 data.db-*
 models/
+logs/
+processed/
 .pytest_cache/
 .superpowers/

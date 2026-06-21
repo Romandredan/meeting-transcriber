@@ -19,6 +19,19 @@ cd meeting-transcriber
 
 > Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-community-1`.
 
+## Автозапуск при входе в систему (опционально)
+Чтобы сервер сам поднимался после входа в Windows (и сразу отслеживал `inbox/`), зарегистрируйте задачу Планировщика, которая запускает `autostart.ps1` (стартует сервер скрыто, логи — в `logs/`, второй экземпляр не плодит):
+```powershell
+$proj = (Get-Location).Path
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$proj\autostart.ps1`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName "MeetingTranscriber" -Action $action -Trigger $trigger -Principal $principal -Force
+```
+Запустить сейчас, не дожидаясь входа: `Start-ScheduledTask MeetingTranscriber`.
+Отключить автозапуск: `Unregister-ScheduledTask MeetingTranscriber -Confirm:$false`.
+Логи сервера: `logs\server.out.log` и `logs\server.err.log`.
+
 <details><summary>Ручная установка (если скрипт не подошёл)</summary>
 
 ```powershell
