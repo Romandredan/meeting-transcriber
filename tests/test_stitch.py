@@ -48,3 +48,15 @@ def test_merge_speaker_runs_collapses_consecutive():
     assert merged[1].speaker == "SPEAKER_01"
     # вход не мутирован
     assert len(segs) == 3 and segs[0].end == 1.0
+
+
+def test_merge_speaker_runs_respects_max_seconds():
+    segs = [Segment(i * 1.0, i * 1.0 + 1.0, f"w{i}", speaker="SPEAKER_00",
+                    words=[Word(i, i + 1, f"w{i}", speaker="SPEAKER_00")]) for i in range(10)]
+    # 10 сегментов по 1с, один спикер; порог 3с → блоки не длиннее 3с, тот же спикер.
+    merged = stitch.merge_speaker_runs(segs, max_seconds=3.0)
+    assert len(merged) > 1
+    assert all((m.end - m.start) <= 3.0 + 1e-9 for m in merged)
+    assert all(m.speaker == "SPEAKER_00" for m in merged)
+    # без порога — всё в одну реплику
+    assert len(stitch.merge_speaker_runs(segs)) == 1

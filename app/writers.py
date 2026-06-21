@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 import os
 
+from app import config
 from app.models import TranscriptResult, Segment
 from app.stitch import humanize_speaker, merge_speaker_runs
 
 
 def _prose_segments(result: TranscriptResult) -> list[Segment]:
     """Сегменты для читаемого протокола (TXT/MD/DOCX): при диаризации склеиваем
-    подряд идущие реплики одного спикера в одну; иначе — как есть (Whisper-сегменты).
+    подряд идущие реплики одного спикера в одну (с порогом config.MERGE_MAX_SECONDS,
+    чтобы длинный монолог резался на под-блоки); иначе — как есть (Whisper-сегменты).
     Субтитры (SRT/VTT) и JSON используют исходные мелкие сегменты."""
-    return merge_speaker_runs(result.segments) if result.diarized else result.segments
+    if not result.diarized:
+        return result.segments
+    return merge_speaker_runs(result.segments, max_seconds=config.MERGE_MAX_SECONDS)
 
 
 def format_timestamp(seconds: float, sep: str = ",") -> str:

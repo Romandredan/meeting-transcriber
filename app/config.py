@@ -59,6 +59,10 @@ MOVE_PROCESSED = _flag("MOVE_PROCESSED", True)
 INBOX_QUIET_SECONDS = float(os.environ.get("INBOX_QUIET_SECONDS", "15"))
 INBOX_POLL_SECONDS = float(os.environ.get("INBOX_POLL_SECONDS", "2"))
 
+# Склейка реплик одного спикера (TXT/MD/DOCX): максимальная длина блока в секундах.
+# Длинный монолог режется на под-блоки по этому порогу. 0 — без ограничения.
+MERGE_MAX_SECONDS = float(os.environ.get("MERGE_MAX_SECONDS", "90"))
+
 
 def ensure_dirs() -> None:
     for d in (INBOX_DIR, PROCESSED_DIR, OUTPUT_DIR, TMP_DIR, MODELS_DIR):

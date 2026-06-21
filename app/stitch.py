@@ -9,7 +9,7 @@ def _overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> floa
     return max(0.0, min(a_end, b_end) - max(a_start, b_start))
 
 
-def merge_speaker_runs(segments: list[Segment]) -> list[Segment]:
+def merge_speaker_runs(segments: list[Segment], max_seconds: float = 0.0) -> list[Segment]:
     """Склеивает подряд идущие сегменты одного спикера в одну реплику.
 
     Таймкод объединённой реплики — от начала первого до конца последнего сегмента;
@@ -17,17 +17,23 @@ def merge_speaker_runs(segments: list[Segment]) -> list[Segment]:
     новый список (входные сегменты не мутируются). Сегменты с speaker=None тоже
     схлопываются по равенству None — поэтому применять имеет смысл к диаризованному
     результату (для читаемого протокола TXT/MD/DOCX).
+
+    `max_seconds` > 0 ограничивает длину блока: если добавление сегмента вывело бы
+    блок за порог, начинается новый блок того же спикера (длинный монолог режется на
+    под-блоки со своими таймкодами, чтобы не было «стены текста»). 0 — без ограничения.
     """
     merged: list[Segment] = []
     for seg in segments:
         if merged and merged[-1].speaker == seg.speaker:
             prev = merged[-1]
-            prev.end = seg.end
-            prev.text = (prev.text.rstrip() + " " + seg.text.lstrip()).strip()
-            prev.words = prev.words + list(seg.words)
-        else:
-            merged.append(Segment(seg.start, seg.end, seg.text.strip(),
-                                  seg.speaker, list(seg.words)))
+            within_cap = max_seconds <= 0 or (seg.end - prev.start) <= max_seconds
+            if within_cap:
+                prev.end = seg.end
+                prev.text = (prev.text.rstrip() + " " + seg.text.lstrip()).strip()
+                prev.words = prev.words + list(seg.words)
+                continue
+        merged.append(Segment(seg.start, seg.end, seg.text.strip(),
+                              seg.speaker, list(seg.words)))
     return merged
 
 
