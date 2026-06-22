@@ -11,7 +11,8 @@
 ```powershell
 git clone <repo-url> meeting-transcriber
 cd meeting-transcriber
-.\install.ps1     # поставит Python 3.12/ffmpeg при необходимости, выберет torch под вашу GPU/CPU
+.\install.ps1     # поставит Python 3.12/ffmpeg при необходимости, выберет torch под вашу GPU/CPU;
+                  # в конце спросит, настроить ли автозапуск при входе в Windows
 # впишите HF_TOKEN в .env (для диаризации; без него работает транскрипция)
 .\run.ps1
 ```
@@ -19,18 +20,16 @@ cd meeting-transcriber
 
 > Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-community-1`.
 
+Тихая установка без вопроса: `.\install.ps1 -Autostart` (с автозапуском) или `.\install.ps1 -NoAutostart`.
+
 ## Автозапуск при входе в систему (опционально)
-Чтобы сервер сам поднимался после входа в Windows (и сразу отслеживал `inbox/`), зарегистрируйте задачу Планировщика, которая запускает `autostart.ps1` (стартует сервер скрыто, логи — в `logs/`, второй экземпляр не плодит):
+`install.ps1` спрашивает об этом в конце. Управлять можно и отдельно, в любой момент:
 ```powershell
-$proj = (Get-Location).Path
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$proj\autostart.ps1`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName "MeetingTranscriber" -Action $action -Trigger $trigger -Principal $principal -Force
+.\register-autostart.ps1     # включить автозапуск (задача Планировщика «при входе»)
+.\unregister-autostart.ps1   # отключить автозапуск
+Start-ScheduledTask MeetingTranscriber   # запустить сейчас, не дожидаясь входа
 ```
-Запустить сейчас, не дожидаясь входа: `Start-ScheduledTask MeetingTranscriber`.
-Отключить автозапуск: `Unregister-ScheduledTask MeetingTranscriber -Confirm:$false`.
-Логи сервера: `logs\server.out.log` и `logs\server.err.log`.
+Сервер стартует скрыто (через `autostart.ps1`), второй экземпляр не плодит. Логи: `logs\server.out.log` и `logs\server.err.log`. Задача работает в вашей пользовательской сессии — это нужно, чтобы был доступ к GPU.
 
 <details><summary>Ручная установка (если скрипт не подошёл)</summary>
 

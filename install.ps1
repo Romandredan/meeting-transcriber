@@ -1,4 +1,9 @@
 ﻿#Requires -Version 5.1
+# Флаги для неинтерактивной установки:
+#   -Autostart    — включить автозапуск без вопроса
+#   -NoAutostart  — не включать автозапуск без вопроса
+# Без флагов скрипт спросит интерактивно.
+param([switch]$Autostart, [switch]$NoAutostart)
 $ErrorActionPreference = "Stop"
 Write-Host "== Meeting Transcriber: установка ==" -ForegroundColor Cyan
 
@@ -45,4 +50,20 @@ $venvPy = ".\.venv\Scripts\python.exe"
 # 5. .env
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env"; Write-Host "Создан .env — впишите HF_TOKEN для диаризации." -ForegroundColor Yellow }
 
-Write-Host "Готово. Запуск: .\run.ps1" -ForegroundColor Cyan
+# 6. Автозапуск при входе в систему (по выбору)
+$doAutostart = $false
+if ($Autostart) { $doAutostart = $true }
+elseif ($NoAutostart) { $doAutostart = $false }
+else {
+    Write-Host ""
+    $ans = Read-Host "Запускать сервер автоматически при входе в Windows? (он будет отслеживать inbox в фоне) [y/N]"
+    $doAutostart = ($ans -match '^(y|yes|д|да)$')
+}
+if ($doAutostart) {
+    & (Join-Path $PSScriptRoot "register-autostart.ps1")
+} else {
+    Write-Host "Автозапуск не настроен. Включить позже: .\register-autostart.ps1" -ForegroundColor DarkGray
+}
+
+Write-Host ""
+Write-Host "Готово. Запуск сейчас: .\run.ps1" -ForegroundColor Cyan
