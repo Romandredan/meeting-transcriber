@@ -12,3 +12,6 @@ logs/
 processed/
 .pytest_cache/
 .superpowers/
+# Внутренние материалы разработки (брейншторм/план/спайк/идеи) — не публикуем
+docs/superpowers/
+docs/ideas/

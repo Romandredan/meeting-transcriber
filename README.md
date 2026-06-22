@@ -3,7 +3,7 @@
 Локальный транскрибатор записей встреч: видео/аудио → диаризованная транскрипция с таймкодами (TXT/SRT/VTT/JSON/MD/DOCX) на GPU.
 
 ## Требования
-- Windows, NVIDIA GPU (проверено на RTX 5070 Ti, 16 ГБ).
+- Windows + современная NVIDIA GPU (рекомендуется ≥ 8 ГБ VRAM). Установщик ставит сборку PyTorch **cu128** — это требует относительно свежей видеокарты и драйвера; на очень старых картах, выпавших из cu128-колёс, GPU задействован не будет.
 - Python 3.10–3.13 и ffmpeg — `install.ps1` устанавливает их автоматически через winget, если они не найдены.
 - HuggingFace-токен для диаризации (примите условия `pyannote/speaker-diarization-community-1` тем же аккаунтом, что выдал токен; без токена транскрипция работает, диаризация просто пропускается).
 
@@ -11,7 +11,7 @@
 ```powershell
 git clone <repo-url> meeting-transcriber
 cd meeting-transcriber
-.\install.ps1     # поставит Python 3.12/ffmpeg при необходимости, выберет torch под вашу GPU/CPU;
+.\install.ps1     # поставит Python 3.10–3.13 и ffmpeg при необходимости, выберет torch под вашу GPU/CPU;
                   # в конце спросит, настроить ли автозапуск при входе в Windows
 # впишите HF_TOKEN в .env (для диаризации; без него работает транскрипция)
 .\run.ps1
@@ -19,6 +19,8 @@ cd meeting-transcriber
 Открыть напечатанный URL (по умолчанию http://127.0.0.1:8473; порт меняется в `.env` → `APP_PORT`, или `.\run.ps1 9000`) или класть файлы в `inbox/`.
 
 > Без NVIDIA GPU приложение работает на CPU (значительно медленнее). Диаризация требует бесплатный HuggingFace-токен и принятия условий `pyannote/speaker-diarization-community-1`.
+>
+> Основной движок — faster-whisper (CTranslate2) на NVIDIA/CUDA. PyTorch-native fallback (transformers) присутствует, но **экспериментальный** — для надёжной работы рекомендуется NVIDIA GPU.
 
 Тихая установка без вопроса: `.\install.ps1 -Autostart` (с автозапуском) или `.\install.ps1 -NoAutostart`.
 
