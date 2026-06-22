@@ -1,0 +1,27 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "git.ignoreLimitWarning": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": ["tests"],
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/.pytest_cache": true,
+      "**/*.pyc": true
+    },
+    "files.watcherExclude": {
+      "**/.venv/**": true,
+      "**/models/**": true,
+      "**/inbox/**": true,
+      "**/output/**": true,
+      "**/processed/**": true,
+      "**/tmp/**": true,
+      "**/logs/**": true
+    }
+  }
+}
