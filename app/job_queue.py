@@ -14,6 +14,20 @@ def enqueue(conn: sqlite3.Connection, source_path: str, settings_json: str) -> i
     return int(cur.lastrowid)
 
 
+def has_active(conn: sqlite3.Connection, source_path: str) -> bool:
+    """Есть ли уже job по этому источнику в работе/готовый (queued/processing/done).
+
+    Используется watcher'ом, чтобы не ставить повторно файл, который ещё лежит в inbox
+    (например, при MOVE_PROCESSED=false или при стартовом скане). 'error' не считаем —
+    такой файл можно поставить заново."""
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE source_path=? AND status IN "
+        "('queued','processing','done') LIMIT 1",
+        (source_path,),
+    ).fetchone()
+    return row is not None
+
+
 def claim_next(conn: sqlite3.Connection) -> sqlite3.Row | None:
     row = conn.execute(
         "SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1"

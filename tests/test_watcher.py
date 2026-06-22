@@ -46,3 +46,30 @@ def test_wait_until_stable_false_when_file_gone():
         raise OSError("нет файла")
 
     assert watcher.wait_until_stable("f", sig_fn=boom, sleep_fn=lambda s: None) is False
+
+
+def test_scan_existing_enqueues_media(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    (tmp_path / "note.txt").write_bytes(b"x")
+    seen = []
+    w = watcher.InboxWatcher(str(tmp_path), enqueue_cb=seen.append,
+                             quiet_seconds=0, poll_seconds=0)
+    w.scan_existing()
+    # дать фоновым потокам _dispatch отработать
+    import time
+    time.sleep(0.3)
+    assert any(p.endswith("a.mp4") for p in seen)
+    assert not any(p.endswith("note.txt") for p in seen)
+
+
+def test_dispatch_dedup(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"x")
+    seen = []
+    w = watcher.InboxWatcher(str(tmp_path), enqueue_cb=seen.append,
+                             quiet_seconds=0, poll_seconds=0)
+    p = str(tmp_path / "a.mp4")
+    w._dispatch(p)
+    w._dispatch(p)  # второй вызов того же пути не должен добавить дубль
+    import time
+    time.sleep(0.3)
+    assert sum(1 for x in seen if x.endswith("a.mp4")) == 1

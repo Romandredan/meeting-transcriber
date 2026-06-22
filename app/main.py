@@ -29,9 +29,16 @@ worker = Worker(conn, broker, engine, settings_state.get_global,
                 processed_dir=str(config.PROCESSED_DIR) if config.MOVE_PROCESSED else None)
 worker.start(stop_event)
 
+def _enqueue_from_inbox(path: str) -> None:
+    # Дедуп: не ставим файл, по которому уже есть job в работе/готовый
+    # (важно при стартовом скане и MOVE_PROCESSED=false).
+    if not job_queue.has_active(conn, path):
+        job_queue.enqueue(conn, path, "{}")
+
+
 watcher = InboxWatcher(
     str(config.INBOX_DIR),
-    enqueue_cb=lambda path: job_queue.enqueue(conn, path, "{}"),
+    enqueue_cb=_enqueue_from_inbox,
     quiet_seconds=config.INBOX_QUIET_SECONDS,
     poll_seconds=config.INBOX_POLL_SECONDS,
 )

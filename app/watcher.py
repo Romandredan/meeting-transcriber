@@ -58,11 +58,38 @@ class InboxWatcher:
         self.quiet_seconds = quiet_seconds
         self.poll_seconds = poll_seconds
         self._observer = None
+        import threading
+        self._inflight: set[str] = set()       # пути, уже взятые в обработку (дедуп событий)
+        self._lock = threading.Lock()
+
+    def _dispatch(self, path: str) -> None:
+        """Запускает обработку пути в отдельном потоке, не допуская дублей."""
+        import os
+        import threading
+        if not path:
+            return
+        norm = os.path.abspath(path)
+        with self._lock:
+            if norm in self._inflight:
+                return
+            self._inflight.add(norm)
+        threading.Thread(target=self._handle, args=(norm,), daemon=True).start()
 
     def _handle(self, path: str) -> None:
-        if is_media(path) and wait_until_stable(
-                path, quiet_seconds=self.quiet_seconds, poll_seconds=self.poll_seconds):
-            self.enqueue_cb(path)
+        try:
+            if is_media(path) and wait_until_stable(
+                    path, quiet_seconds=self.quiet_seconds, poll_seconds=self.poll_seconds):
+                self.enqueue_cb(path)
+        finally:
+            with self._lock:
+                self._inflight.discard(path)
+
+    def scan_existing(self) -> None:
+        """Ставит в очередь медиафайлы, уже лежащие в inbox на момент старта."""
+        import os
+        for root, _dirs, files in os.walk(self.inbox_dir):
+            for name in files:
+                self._dispatch(os.path.join(root, name))
 
     def start(self) -> None:
         from watchdog.events import FileSystemEventHandler
@@ -71,15 +98,21 @@ class InboxWatcher:
         outer = self
 
         class Handler(FileSystemEventHandler):
+            # Ловим и создание, и перемещение/переименование в inbox: Проводник при
+            # копировании с другого диска нередко генерирует moved, а не created.
             def on_created(self, event):
                 if not event.is_directory:
-                    import threading
-                    threading.Thread(target=outer._handle,
-                                     args=(event.src_path,), daemon=True).start()
+                    outer._dispatch(event.src_path)
+
+            def on_moved(self, event):
+                if not event.is_directory:
+                    outer._dispatch(getattr(event, "dest_path", None))
 
         self._observer = Observer()
         self._observer.schedule(Handler(), self.inbox_dir, recursive=True)
         self._observer.start()
+        # Подхватываем файлы, уже лежащие в inbox до запуска сервера.
+        self.scan_existing()
 
     def stop(self) -> None:
         if self._observer:

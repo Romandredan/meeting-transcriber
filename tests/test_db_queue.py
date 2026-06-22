@@ -44,3 +44,14 @@ def test_recover_stuck(tmp_path):
     assert job_queue.recover_stuck(conn) == 1
     row = job_queue.claim_next(conn)
     assert row is not None  # снова queued
+
+
+def test_has_active(tmp_path):
+    conn = make_conn(tmp_path)
+    assert job_queue.has_active(conn, "C:/v/a.mp4") is False
+    jid = job_queue.enqueue(conn, "C:/v/a.mp4", "{}")
+    assert job_queue.has_active(conn, "C:/v/a.mp4") is True   # queued
+    job_queue.update(conn, jid, status="error", error="x")
+    assert job_queue.has_active(conn, "C:/v/a.mp4") is False  # error → можно заново
+    job_queue.update(conn, jid, status="done")
+    assert job_queue.has_active(conn, "C:/v/a.mp4") is True   # done считается
