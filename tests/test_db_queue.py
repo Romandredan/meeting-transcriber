@@ -55,3 +55,20 @@ def test_has_active(tmp_path):
     assert job_queue.has_active(conn, "C:/v/a.mp4") is False  # error → можно заново
     job_queue.update(conn, jid, status="done")
     assert job_queue.has_active(conn, "C:/v/a.mp4") is True   # done считается
+
+
+def test_schema_creates_templates_and_analyses(tmp_path):
+    conn = make_conn(tmp_path)
+    names = {r["name"] for r in
+             conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"jobs", "settings", "templates", "analyses"} <= names
+
+
+def test_init_schema_is_idempotent(tmp_path):
+    """Повторный init_schema на существующей БД не падает (нет миграций)."""
+    conn = make_conn(tmp_path)
+    conn.execute("INSERT INTO templates (label, display_name, prompt_body) "
+                 "VALUES ('protocol', 'Протокол', 'текст')")
+    conn.commit()
+    db.init_schema(conn)
+    assert conn.execute("SELECT COUNT(*) c FROM templates").fetchone()["c"] == 1

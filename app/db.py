@@ -20,6 +20,31 @@ CREATE TABLE IF NOT EXISTS settings (
     id      INTEGER PRIMARY KEY CHECK (id = 1),
     data    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS templates (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    label        TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    description  TEXT NOT NULL DEFAULT '',
+    prompt_body  TEXT NOT NULL,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS analyses (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          INTEGER NOT NULL,
+    label           TEXT NOT NULL,
+    display_name    TEXT NOT NULL,
+    prompt_snapshot TEXT NOT NULL,
+    model           TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'queued',
+    stage           TEXT NOT NULL DEFAULT '',
+    progress        REAL NOT NULL DEFAULT 0,
+    chunks          INTEGER NOT NULL DEFAULT 1,
+    result_md       TEXT,
+    error           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_analyses_job ON analyses(job_id, id DESC);
 """
 
 
