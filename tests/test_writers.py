@@ -88,3 +88,16 @@ def test_write_all_creates_files(tmp_path):
     assert names == ["meeting.json", "meeting.srt", "meeting.txt"]
     for p in paths:
         assert open(p, encoding="utf-8").read()
+
+
+def test_write_all_always_writes_json(tmp_path):
+    """JSON пишется даже когда его не просили: он — вход стадии analyze."""
+    paths = writers.write_all(sample(), str(tmp_path), ["txt"], "meeting")
+    names = sorted(p.split("/")[-1].split("\\")[-1] for p in paths)
+    assert names == ["meeting.json", "meeting.txt"]
+
+
+def test_write_all_does_not_duplicate_json(tmp_path):
+    """Если json уже в списке форматов — второго вызова не происходит."""
+    paths = writers.write_all(sample(), str(tmp_path), ["json", "txt"], "meeting")
+    assert sum(1 for p in paths if p.endswith(".json")) == 1

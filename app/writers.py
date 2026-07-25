@@ -99,6 +99,11 @@ def to_docx(result: TranscriptResult, path: str) -> None:
 def write_all(result: TranscriptResult, out_dir: str, formats: list[str],
               basename: str) -> list[str]:
     os.makedirs(out_dir, exist_ok=True)
+    # JSON пишется ВСЕГДА, независимо от галочек форматов: это машинный источник
+    # для стадии analyze (её вход — output/<job_id>/<basename>.json).
+    formats = list(formats)
+    if "json" not in formats:
+        formats.append("json")
     written: list[str] = []
     text_map = {"txt": to_txt, "srt": to_srt, "vtt": to_vtt, "json": to_json, "md": to_md}
     for fmt in formats:
