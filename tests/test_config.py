@@ -38,3 +38,18 @@ def test_flag_parsing(monkeypatch):
     assert config._flag("F", False) is True
     monkeypatch.delenv("F")
     assert config._flag("F", True) is True
+
+
+def test_llm_defaults():
+    """Пустой .env должен давать рабочие дефолты для стадии analyze."""
+    assert config.ANALYZE_ENABLED is True
+    assert config.LLM_BASE_URL == "http://localhost:11434"
+    assert config.LLM_MODEL == "qwen3:14b"
+    assert config.LLM_NUM_CTX == 32768
+    assert config.LLM_TEMPERATURE == 0.2
+    assert config.LLM_IDLE_TIMEOUT == 180.0
+
+
+def test_llm_base_url_strips_trailing_slash(monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "http://host:11434/")
+    assert config._base_url("LLM_BASE_URL", "http://localhost:11434") == "http://host:11434"

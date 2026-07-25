@@ -63,6 +63,24 @@ INBOX_POLL_SECONDS = float(os.environ.get("INBOX_POLL_SECONDS", "2"))
 # Длинный монолог режется на под-блоки по этому порогу. 0 — без ограничения.
 MERGE_MAX_SECONDS = float(os.environ.get("MERGE_MAX_SECONDS", "90"))
 
+def _base_url(env_name: str, default: str) -> str:
+    """URL без хвостового слэша — иначе склейка даёт '//api/chat'."""
+    return os.environ.get(env_name, default).strip().rstrip("/")
+
+
+# --- Стадия analyze (структурирование транскрипта локальной LLM через Ollama) ---
+# ANALYZE_ENABLED=false полностью выключает фичу: роуты не регистрируются,
+# воркер не заглядывает в очередь анализов, UI не показывает блок анализов.
+ANALYZE_ENABLED = _flag("ANALYZE_ENABLED", True)
+LLM_BASE_URL = _base_url("LLM_BASE_URL", "http://localhost:11434")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:14b")
+# Окно контекста. 32768 рассчитано под 16 ГБ VRAM при KV-кэше q8_0 (см. спеку §6).
+LLM_NUM_CTX = int(os.environ.get("LLM_NUM_CTX", "32768"))
+LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
+# Таймаут ПО ПРОСТОЮ, а не по общему времени: счётчик сбрасывается на каждом
+# полученном токене. Медленный, но живой ответ (счёт в ОЗУ) не убивается.
+LLM_IDLE_TIMEOUT = float(os.environ.get("LLM_IDLE_TIMEOUT", "180"))
+
 
 def ensure_dirs() -> None:
     for d in (INBOX_DIR, PROCESSED_DIR, OUTPUT_DIR, TMP_DIR, MODELS_DIR):
