@@ -80,9 +80,35 @@ def test_generate_raises_on_idle_timeout(monkeypatch):
 def test_generate_survives_slow_but_live_stream(monkeypatch):
     stream = SlowStream([{"message": {"content": "мед"}, "done": False},
                          {"message": {"content": "ленно"}, "done": True}])
-    monkeypatch.setattr(llm, "_open", lambda req, timeout: stream)
+    seen = {}
+
+    def fake_open(req, timeout):
+        seen["timeout"] = timeout
+        return stream
+
+    monkeypatch.setattr(llm, "_open", fake_open)
+    p = provider()
     # Таймаут задан на ЧТЕНИЕ, а не на весь ответ: много медленных чтений — не ошибка.
-    assert provider().generate("сис", "польз") == "медленно"
+    assert p.generate("сис", "польз") == "медленно"
+    # timeout, переданный в _open, — это ИМЕННО idle_timeout провайдера: подтверждает,
+    # что таймаут отдан сокету на КАЖДОЕ чтение, а не отсчитывается нами по wall-clock
+    # поверх всего ответа.
+    assert seen["timeout"] == p.idle_timeout
+    # readline вызывался построчно (по разу на каждую переданную строку), а не был
+    # прочитан одним куском — иначе сама идея сокетного таймаута на чтение была бы
+    # неотличима от общего таймера на весь ответ.
+    assert stream.reads == 2
+
+
+def test_generate_raises_on_stream_cut_before_done(monkeypatch):
+    """Соединение обрывается ДО объекта с done:true — это отказ, а не успех:
+    частичный результат никогда не должен просачиваться наружу как ответ."""
+    monkeypatch.setattr(llm, "_open", lambda req, timeout: ndjson(
+        {"message": {"content": "часть"}, "done": False},
+    ))
+    with pytest.raises(llm.LlmError) as e:
+        provider().generate("сис", "польз")
+    assert "оборвала" in str(e.value)
 
 
 def test_generate_reports_missing_model(monkeypatch):
@@ -138,6 +164,22 @@ def test_health_has_no_warning_when_fully_on_gpu(monkeypatch):
 
     monkeypatch.setattr(llm, "_open", fake_open)
     assert provider().health()["warning"] is None
+
+
+def test_health_has_no_warning_when_model_missing_from_ps(monkeypatch):
+    """Модель установлена, но ещё не загружена в память: /api/ps о ней ничего не
+    знает. Это не ошибка и не "всё хорошо" — просто нет сведений о VRAM."""
+    def fake_open(req, timeout):
+        if req.full_url.endswith("/api/show"):
+            return io.BytesIO(b'{"details": {}}')
+        return io.BytesIO(json.dumps({"models": []}).encode("utf-8"))
+
+    monkeypatch.setattr(llm, "_open", fake_open)
+    h = provider().health()
+    assert h["ok"] is True
+    assert h["installed"] is True
+    assert h["warning"] is None
+    assert h["error"] is None
 
 
 def test_health_reports_missing_model(monkeypatch):

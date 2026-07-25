@@ -64,6 +64,7 @@ class OllamaProvider:
         except urllib.error.URLError as e:      # HTTPError — подкласс URLError
             raise LlmError(self._explain(e)) from e
         parts: list[str] = []
+        finished = False  # обрыв соединения ДО этого флага — отказ, а не успех
         try:
             while True:
                 try:
@@ -82,13 +83,22 @@ class OllamaProvider:
                     raise LlmError(f"Ollama вернула ошибку: {obj['error']}")
                 parts.append(obj.get("message", {}).get("content", ""))
                 if obj.get("done"):
+                    finished = True
                     break
         finally:
             try:
                 stream.close()
             except Exception:
                 pass
-        return "".join(parts)
+        result = "".join(parts)
+        if not finished:
+            # Соединение оборвалось до "done": true — сервер упал, сеть разорвалась
+            # и т.п. Частичный результат не отдаём никогда: он выглядит как
+            # завершённый анализ, а на деле обрезан произвольно на токене.
+            raise LlmError(
+                f"Ollama оборвала ответ, не завершив его "
+                f"(получено {len(result)} символов) — попробуйте ещё раз")
+        return result
 
     # --- публичное ----------------------------------------------------------
 
