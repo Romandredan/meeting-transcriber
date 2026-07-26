@@ -18,6 +18,20 @@ def enqueue(conn: sqlite3.Connection, job_id: int, label: str, display_name: str
     return int(cur.lastrowid)
 
 
+def has_active(conn: sqlite3.Connection, job_id: int, label: str) -> bool:
+    """Есть ли уже анализ этой встречи по этой метке в очереди/работе.
+
+    По образцу job_queue.has_active. В отличие от job'ов, 'done' НЕ считается
+    активным: повторный прогон той же метки — штатный сценарий «Ещё раз», ради
+    которого и заведена история версий."""
+    row = conn.execute(
+        "SELECT 1 FROM analyses WHERE job_id=? AND label=? AND status IN "
+        "('queued','processing') LIMIT 1",
+        (job_id, label),
+    ).fetchone()
+    return row is not None
+
+
 def claim_next(conn: sqlite3.Connection) -> sqlite3.Row | None:
     row = conn.execute(
         "SELECT * FROM analyses WHERE status='queued' ORDER BY id LIMIT 1"

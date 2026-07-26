@@ -4,6 +4,7 @@ import io
 import json
 import os
 import queue
+import re
 import sqlite3
 import zipfile
 from urllib.parse import quote
@@ -17,6 +18,19 @@ from app import analyses, config, job_queue, llm, templates_store
 from app.models import Settings
 
 WEB_DIR = config.BASE_DIR / "web"
+
+# Метка идёт в имя файла результата на диске (f"{basename}.{label}.md") — поэтому
+# только латиница, цифры, дефис и подчёркивание, без пробелов и разделителей пути.
+_LABEL_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
+
+
+def _validate_label(label: str) -> None:
+    if not _LABEL_RE.match(label):
+        raise HTTPException(
+            400,
+            f"метка «{label}» недопустима: разрешены только латинские буквы, цифры, "
+            f"дефис и подчёркивание, от 1 до 32 символов — метка используется в имени "
+            f"файла результата на диске")
 
 
 class JobIn(BaseModel):
@@ -136,6 +150,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
 
         @app.post("/api/templates")
         def create_template(body: TemplateIn):
+            _validate_label(body.label)
             try:
                 tid = templates_store.create(conn, body.label, body.display_name,
                                              body.description, body.prompt_body,
@@ -148,6 +163,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         def update_template(template_id: int, body: TemplateIn):
             if templates_store.get(conn, template_id) is None:
                 raise HTTPException(404, "шаблон не найден")
+            _validate_label(body.label)
             try:
                 templates_store.update(conn, template_id, label=body.label,
                                        display_name=body.display_name,
@@ -173,6 +189,9 @@ def create_app(conn, broker, settings_state) -> FastAPI:
             tpl = templates_store.get_by_label(conn, body.label)
             if tpl is None or not tpl["enabled"]:
                 raise HTTPException(400, f"шаблон «{body.label}» недоступен")
+            if analyses.has_active(conn, job_id, tpl["label"]):
+                raise HTTPException(
+                    400, f"анализ этой встречи по шаблону «{tpl['label']}» уже в очереди")
             job_out = job["output_dir"] or ""
             basename = os.path.splitext(job["filename"])[0]
             if not os.path.isfile(os.path.join(job_out, f"{basename}.json")):

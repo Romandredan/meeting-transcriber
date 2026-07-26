@@ -94,6 +94,44 @@ def test_templates_crud(tmp_path):
     assert all(t["id"] != tid for t in client.get("/api/templates").json())
 
 
+@pytest.mark.parametrize("label", ["", "with space", "a/b", "a\\b", "a" * 33, "имя"])
+def test_create_template_rejects_invalid_label(tmp_path, label):
+    client, _ = make_client(tmp_path)
+    r = client.post("/api/templates", json={
+        "label": label, "display_name": "Т", "description": "",
+        "prompt_body": "тело", "enabled": True})
+    assert r.status_code == 400
+    assert isinstance(r.json()["detail"], str)
+
+
+def test_create_template_accepts_valid_label(tmp_path):
+    client, _ = make_client(tmp_path)
+    r = client.post("/api/templates", json={
+        "label": "my-label_2", "display_name": "Т", "description": "",
+        "prompt_body": "тело", "enabled": True})
+    assert r.status_code == 200
+
+
+def test_update_template_rejects_invalid_label(tmp_path):
+    client, conn = make_client(tmp_path)
+    tid = templates_store.create(conn, "custom", "Своё", "", "тело")
+    r = client.put(f"/api/templates/{tid}", json={
+        "label": "bad label", "display_name": "Своё", "description": "",
+        "prompt_body": "тело", "enabled": True})
+    assert r.status_code == 400
+
+
+def test_create_template_rejects_duplicate_label_via_api(tmp_path):
+    """Дубль метки — штатный отказ 400 с русским текстом, а не 500 от sqlite3.IntegrityError."""
+    client, _ = make_client(tmp_path)
+    body = {"label": "dup", "display_name": "А", "description": "",
+            "prompt_body": "тело", "enabled": True}
+    assert client.post("/api/templates", json=body).status_code == 200
+    r = client.post("/api/templates", json={**body, "display_name": "Б"})
+    assert r.status_code == 400
+    assert "dup" in r.json()["detail"]
+
+
 def test_post_analysis_enqueues(tmp_path):
     client, conn = make_client(tmp_path)
     templates_store.seed_defaults(conn)
@@ -132,6 +170,29 @@ def test_post_analysis_rejects_missing_transcript(tmp_path):
     r = client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"})
     assert r.status_code == 400
     assert "транскрипт" in r.json()["detail"]
+
+
+def test_post_analysis_rejects_duplicate_while_active(tmp_path):
+    """Двойной клик не должен ставить в очередь два одинаковых анализа."""
+    client, conn = make_client(tmp_path)
+    templates_store.seed_defaults(conn)
+    jid = done_job_with_transcript(conn, tmp_path)
+    first = client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"})
+    assert first.status_code == 200
+    second = client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"})
+    assert second.status_code == 400
+    assert "protocol" in second.json()["detail"]
+
+
+def test_post_analysis_allows_rerun_after_done(tmp_path):
+    """'done' не блокирует — повторный прогон той же метки штатный сценарий."""
+    client, conn = make_client(tmp_path)
+    templates_store.seed_defaults(conn)
+    jid = done_job_with_transcript(conn, tmp_path)
+    aid = analyses.enqueue(conn, jid, "protocol", "Протокол", "п", "m")
+    analyses.update(conn, aid, status="done", result_md="готово")
+    r = client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"})
+    assert r.status_code == 200
 
 
 def test_list_analyses_returns_history_newest_first(tmp_path):

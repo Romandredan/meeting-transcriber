@@ -76,3 +76,38 @@ def test_recover_stuck(tmp_path):
     analyses.claim_next(conn)
     assert analyses.recover_stuck(conn) == 1
     assert analyses.claim_next(conn) is not None  # снова queued
+
+
+def test_has_active_true_for_queued(tmp_path):
+    conn = make_conn(tmp_path)
+    add(conn, job_id=1, label="protocol")
+    assert analyses.has_active(conn, 1, "protocol") is True
+
+
+def test_has_active_true_for_processing(tmp_path):
+    conn = make_conn(tmp_path)
+    add(conn, job_id=1, label="protocol")
+    analyses.claim_next(conn)
+    assert analyses.has_active(conn, 1, "protocol") is True
+
+
+def test_has_active_false_when_done(tmp_path):
+    """done НЕ считается активным — повторный прогон той же метки штатный сценарий."""
+    conn = make_conn(tmp_path)
+    aid = add(conn, job_id=1, label="protocol")
+    analyses.update(conn, aid, status="done", result_md="# готово")
+    assert analyses.has_active(conn, 1, "protocol") is False
+
+
+def test_has_active_false_when_error(tmp_path):
+    conn = make_conn(tmp_path)
+    aid = add(conn, job_id=1, label="protocol")
+    analyses.update(conn, aid, status="error", error="сбой")
+    assert analyses.has_active(conn, 1, "protocol") is False
+
+
+def test_has_active_false_for_different_label_or_job(tmp_path):
+    conn = make_conn(tmp_path)
+    add(conn, job_id=1, label="protocol")
+    assert analyses.has_active(conn, 1, "summary") is False
+    assert analyses.has_active(conn, 2, "protocol") is False
