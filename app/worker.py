@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -8,6 +9,8 @@ import time
 
 from app import analyses, analyze, config, ffmpeg_tool, job_queue, writers
 from app.models import Settings, TranscriptResult
+
+_log = logging.getLogger(__name__)
 
 
 def merge_settings(global_s: Settings, override: dict) -> Settings:
@@ -102,12 +105,12 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
     try:
         job = job_queue.get(conn, job_id)
         if job is None:
-            raise RuntimeError("встреча не найдена")
+            raise analyze.AnalyzeError("встреча не найдена")
         job_out = job["output_dir"] or os.path.join(output_dir, str(job_id))
         basename = os.path.splitext(job["filename"])[0]
         json_path = os.path.join(job_out, f"{basename}.json")
         if not os.path.isfile(json_path):
-            raise RuntimeError(f"нет файла транскрипта: {json_path}")
+            raise analyze.AnalyzeError(f"нет файла транскрипта: {json_path}")
         with open(json_path, encoding="utf-8") as f:
             raw = f.read()
         try:
@@ -116,7 +119,7 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
             # Отдельный перехват: json.JSONDecodeError.__str__ — английский текст
             # ("Expecting value: line 1 column 1..."), а тексты ошибок в проекте
             # по-русски и должны быть понятны не разработчику, а пользователю.
-            raise RuntimeError(
+            raise analyze.AnalyzeError(
                 f"файл транскрипта повреждён: {json_path} — расшифруйте встречу заново"
             ) from e
         result = TranscriptResult.from_dict(data)
@@ -129,15 +132,23 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
                                   vocabulary=settings_global.vocabulary,
                                   report=report)
 
-        # На диске — последняя версия по метке; история версий живёт в БД.
-        os.makedirs(job_out, exist_ok=True)
-        with open(os.path.join(job_out, f"{basename}.{row['label']}.md"),
-                  "w", encoding="utf-8") as f:
-            f.write(md)
-
+        # БД — источник истины: результат должен сохраниться, даже если запись
+        # файла на диск не удастся (нет прав, диск полон, файл занят и т.п.).
+        # Иначе минуты работы GPU выбрасываются из-за постороннего сбоя ввода-вывода.
         analyses.update(conn, analysis_id, status="done", progress=1.0,
                         stage="reduce", result_md=md)
         broker.publish(job_id, "reduce", 1.0, "done", analysis_id=analysis_id)
+
+        # На диске — последняя версия по метке (удобство); история версий живёт
+        # в БД. Best-effort, как move_to_processed и provider.unload() ниже.
+        try:
+            os.makedirs(job_out, exist_ok=True)
+            with open(os.path.join(job_out, f"{basename}.{row['label']}.md"),
+                      "w", encoding="utf-8") as f:
+                f.write(md)
+        except Exception as e:
+            _log.warning("Не удалось записать .md на диск для анализа %s: %s",
+                         analysis_id, e)
     except Exception as e:
         text = str(e) if isinstance(e, analyze.AnalyzeError) else f"{type(e).__name__}: {e}"
         analyses.update(conn, analysis_id, status="error", error=text)

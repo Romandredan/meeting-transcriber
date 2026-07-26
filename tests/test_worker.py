@@ -114,6 +114,31 @@ def test_process_analysis_writes_md_and_marks_done(tmp_path):
     assert os.path.isfile(os.path.join(out_dir, str(jid), "a.protocol.md"))
 
 
+def test_process_analysis_keeps_result_when_md_write_fails(tmp_path, monkeypatch):
+    """Сбой записи .md на диск — не повод терять результат: источник истины БД."""
+    conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
+    jid, out_dir = _job_with_transcript(conn, tmp_path)
+    aid = analyses.enqueue(conn, jid, "protocol", "Протокол", "тело шаблона", "qwen3:14b")
+    row = analyses.claim_next(conn)
+    md_path = os.path.join(out_dir, str(jid), "a.protocol.md")
+    real_open = open
+
+    def fake_open(file, *a, **kw):
+        if os.fspath(file) == md_path:
+            raise OSError("диск полон")
+        return real_open(file, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    engine, provider = FakeEngine(), FakeProvider(["# Протокол\nтекст"])
+    worker.process_analysis(conn, ProgressBroker(), engine, provider, row,
+                            settings_global=Settings(), output_dir=out_dir)
+    done = analyses.get(conn, aid)
+    assert done["status"] == "done"
+    assert done["progress"] == 1.0
+    assert done["result_md"] == "# Протокол\nтекст"
+    assert not os.path.isfile(md_path)  # запись не удалась — и это ожидаемо
+
+
 def test_process_analysis_unloads_whisper_before_llm_and_ollama_after(tmp_path):
     """Whisper обязан уйти из VRAM до LLM, Ollama — освободить карту после."""
     conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
@@ -150,6 +175,23 @@ def test_process_analysis_marks_error_when_transcript_missing(tmp_path):
     err = analyses.get(conn, aid)
     assert err["status"] == "error"
     assert "транскрипт" in err["error"]
+    # Класс исключения — деталь реализации (все проверки process_analysis бросают
+    # RuntimeError), пользователю она не нужна и не должна утекать в текст.
+    assert not err["error"].startswith("RuntimeError")
+
+
+def test_process_analysis_marks_error_with_russian_text_when_job_missing(tmp_path):
+    """job_queue.get вернул None (встреча удалена/не существует) — текст по-русски,
+    без технического префикса RuntimeError."""
+    conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
+    aid = analyses.enqueue(conn, 999999, "protocol", "Протокол", "тело", "m")
+    row = analyses.claim_next(conn)
+    worker.process_analysis(conn, ProgressBroker(), FakeEngine(), FakeProvider(), row,
+                            settings_global=Settings(), output_dir=str(tmp_path / "out"))
+    err = analyses.get(conn, aid)
+    assert err["status"] == "error"
+    assert "встреча не найдена" in err["error"]
+    assert not err["error"].startswith("RuntimeError")
 
 
 def test_process_analysis_marks_error_and_writes_nothing_on_llm_failure(tmp_path):
@@ -208,6 +250,7 @@ def test_process_analysis_marks_error_with_russian_text_on_corrupted_json(tmp_pa
     assert "повреждён" in err["error"]
     assert "заново" in err["error"]
     assert "Expecting" not in err["error"]  # не утекает англ. текст json.JSONDecodeError
+    assert not err["error"].startswith("RuntimeError")
 
 
 def _make_worker(tmp_path, engine, provider=None):
