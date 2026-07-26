@@ -13,7 +13,13 @@ OUTPUT_RESERVE_TOKENS = 1000        # место под ответ модели
 MIN_TRANSCRIPT_CHARS = 200          # короче — анализировать нечего
 OVERLAP_REPLICAS = 2                # перекрытие соседних чанков
 
-_PREFIX_RE = re.compile(r"^(\[\d{2,}:\d{2}\] (?:[^:]+: )?)")
+# Два раздельных шаблона вместо одного «умного»: один общий регэксп с
+# опциональной меткой спикера не может отличить «Спикер N: » от произвольного
+# текста реплики с двоеточием (например, «Итого: ...») — при недиаризованном
+# тексте это искажало бы монолог. Какой шаблон применить, решает вызывающий
+# код (параметр diarized), а не угадывание по содержимому строки.
+_TIMESTAMP_PREFIX_RE = re.compile(r"^(\[\d{2,}:\d{2}\] )")
+_SPEAKER_PREFIX_RE = re.compile(r"^(\[\d{2,}:\d{2}\] [^:]+: )")
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 
 
@@ -48,14 +54,22 @@ def transcript_replicas(result: TranscriptResult) -> list[str]:
     return lines
 
 
-def split_long_replica(replica: str, max_tokens: int) -> list[str]:
+def split_long_replica(replica: str, max_tokens: int, diarized: bool = True) -> list[str]:
     """Режет сверхдлинную реплику по границам предложений, сохраняя на каждом куске
-    таймкод и имя спикера (иначе продолжение монолога теряет автора).
+    таймкод и (если есть) имя спикера (иначе продолжение монолога теряет автора).
 
     Нужно только при MERGE_MAX_SECONDS=0: с дефолтом 90 с блок ≈ 600 токенов и в
     чанк влезает всегда. Одиночное предложение длиннее чанка остаётся как есть —
-    такого в человеческой речи не бывает."""
-    m = _PREFIX_RE.match(replica)
+    такого в человеческой речи не бывает.
+
+    `diarized` определяет, что считать префиксом: с диаризацией — таймкод плюс
+    имя спикера, без неё — только таймкод. Так `TransformersWhisperEngine` при
+    diarize=false отдаёт всю встречу одним сегментом без диаризации; текст этого
+    монолога может начинаться с оборота вида «Итого: ...» — без явного diarized
+    регэксп принял бы это «Итого:» за имя спикера и продублировал бы его на
+    каждом куске монолога."""
+    prefix_re = _SPEAKER_PREFIX_RE if diarized else _TIMESTAMP_PREFIX_RE
+    m = prefix_re.match(replica)
     prefix = m.group(1) if m else ""
     body = replica[len(prefix):]
     pieces: list[str] = []
@@ -73,16 +87,20 @@ def split_long_replica(replica: str, max_tokens: int) -> list[str]:
 
 
 def chunk_replicas(replicas: list[str], max_tokens: int,
-                   overlap: int = OVERLAP_REPLICAS) -> list[list[str]]:
+                   overlap: int = OVERLAP_REPLICAS, diarized: bool = True) -> list[list[str]]:
     """Нарезает список реплик на чанки по границам реплик, с перекрытием.
 
     Перекрытие в две реплики нужно для фактов, размазанных по стыку: «— Сделаешь
     до пятницы? / — Да, сделаю» без него теряется в обоих фрагментах — в первом
     нет ответа, во втором нет вопроса. Дублирование тезисов безвредно: REDUCE их
-    схлопнет."""
+    схлопнет.
+
+    `diarized` (по умолчанию True — контракт вызовов не ломается) пробрасывается
+    в split_long_replica при предварительной нарезке сверхдлинных реплик: без
+    диаризации в префиксе не должно быть ничего, кроме таймкода."""
     items: list[str] = []
     for r in replicas:
-        items.extend(split_long_replica(r, max_tokens)
+        items.extend(split_long_replica(r, max_tokens, diarized=diarized)
                      if estimate_tokens(r) > max_tokens else [r])
 
     chunks: list[list[str]] = []

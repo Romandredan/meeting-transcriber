@@ -85,3 +85,38 @@ def test_chunk_replicas_pre_splits_oversized_replica():
     long_one = "[00:00] Спикер 1: " + "Фраза раз. " * 200
     chunks = analyze.chunk_replicas([long_one], max_tokens=100, overlap=0)
     assert len(chunks) > 1
+
+
+def test_split_long_replica_non_diarized_does_not_swallow_colon_into_prefix():
+    """Без диаризации префикс — только таймкод. Оборот вида «Итого: ...» в начале
+    тела реплики не должен приниматься за имя спикера и дублироваться на каждом
+    куске монолога (ровно так отдаёт текст TransformersWhisperEngine при
+    diarize=false — одним недиаризованным сегментом)."""
+    body = ("Итого: было решено сделать раз. Второе решение принято тоже! "
+            "Третье решение таково? Четвёртое решение окончательное.")
+    replica = "[00:00] " + body
+    pieces = analyze.split_long_replica(replica, max_tokens=20, diarized=False)
+    assert len(pieces) > 1
+    for p in pieces:
+        assert p.startswith("[00:00] ")
+    assert pieces[0].startswith("[00:00] Итого:")
+    for p in pieces[1:]:
+        assert "Итого:" not in p
+
+
+def test_chunk_replicas_diarized_false_does_not_duplicate_false_prefix():
+    """То же самое, но через chunk_replicas: параметр diarized должен дойти до
+    split_long_replica при предварительной нарезке сверхдлинной реплики."""
+    long_one = "[00:00] Итого: " + "Решение принято. " * 200
+    chunks = analyze.chunk_replicas([long_one], max_tokens=100, overlap=0, diarized=False)
+    assert len(chunks) > 1
+    total_occurrences = sum(line.count("Итого:") for ch in chunks for line in ch)
+    assert total_occurrences == 1
+
+
+def test_chunk_replicas_empty_input_returns_empty_list():
+    assert analyze.chunk_replicas([], max_tokens=100) == []
+
+
+def test_transcript_replicas_empty_segments_returns_empty_list():
+    assert analyze.transcript_replicas(result_from([])) == []
