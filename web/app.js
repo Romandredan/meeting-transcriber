@@ -163,13 +163,16 @@ function analysisRow(a, isLatest) {
     </details>`;
 }
 
-async function loadAnalyses(jobId) {
+async function loadAnalyses(jobId, openIds) {
   const box = $(`analyses-${jobId}`);
   if (!box) return;
   // Состояние представления (что раскрыто), а не данных — переживает перерисовку.
-  // Опрашивается здесь, а не в refresh(): loadAnalyses зовётся также из SSE и клика
-  // по «Ещё раз»/«Удалить», и без этого раскрытые карточки схлопывались бы и там.
-  const openIds = new Set([...box.querySelectorAll("details[open]")].map((d) => d.id));
+  // Если множество не передано явно — читаем его из ещё целого контейнера. Так
+  // работает вызов из SSE и из клика «Ещё раз»/«Удалить»: там разметка на момент
+  // вызова цела. А вот refresh() зовёт эту функцию УЖЕ ПОСЛЕ того, как заменил
+  // $("jobs").innerHTML целиком — к этому моменту box уже новый и пустой, читать
+  // из него нечего, поэтому refresh() снимает открытые id заранее и передаёт сюда.
+  const open = openIds || new Set([...box.querySelectorAll("details[open]")].map((d) => d.id));
   const list = await (await fetch(`/api/jobs/${jobId}/analyses`)).json();
   const seen = new Set();
   box.innerHTML = list.map((a) => {
@@ -178,7 +181,12 @@ async function loadAnalyses(jobId) {
     if (latest) seen.add(a.label);
     return analysisRow(a, latest);
   }).join("");
-  for (const id of openIds) {
+  // Восстановленное состояние применяется ПОВЕРХ умолчания (isLatest → open в
+  // analysisRow), а не вместо него: карточки, которые пользователь не трогал,
+  // по-прежнему раскрываются по правилу «текущая версия». Если id из старого
+  // набора в новой разметке не нашёлся (анализ удалили между обновлениями) —
+  // просто пропускаем, без ошибки.
+  for (const id of open) {
     const el = document.getElementById(id);
     if (el) el.open = true;
   }
@@ -202,6 +210,12 @@ async function refresh() {
   // каждые 5 секунд не должна молча возвращать пользователя к первому шаблону в списке.
   const picks = {};
   document.querySelectorAll(".tpl-pick").forEach((sel) => { picks[sel.id] = sel.value; });
+  // Раскрытые <details> — тоже состояние представления, и снимать его нужно ЗДЕСЬ,
+  // до замены $("jobs").innerHTML: сама эта замена уничтожает старые <div id="analyses-N">
+  // вместе со всеми <details> внутри, а loadAnalyses() ниже вызывается уже для новых,
+  // пустых контейнеров — читать открытые id из них было бы поздно.
+  const openIds = new Set(
+    [...document.querySelectorAll(".analyses details[open]")].map((d) => d.id));
   const jobs = await (await fetch("/api/jobs")).json();
   $("jobs").innerHTML = jobs.map(jobCard).join("") || "<p class=hint>Очередь пуста</p>";
   for (const [id, value] of Object.entries(picks)) {
@@ -211,7 +225,7 @@ async function refresh() {
     if (sel && [...sel.options].some((o) => o.value === value)) sel.value = value;
   }
   if (LLM.enabled) {
-    for (const j of jobs) if (j.status === "done") loadAnalyses(j.id);
+    for (const j of jobs) if (j.status === "done") loadAnalyses(j.id, openIds);
   }
 }
 
