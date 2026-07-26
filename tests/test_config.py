@@ -53,3 +53,8 @@ def test_llm_defaults():
 def test_llm_base_url_strips_trailing_slash(monkeypatch):
     monkeypatch.setenv("LLM_BASE_URL", "http://host:11434/")
     assert config._base_url("LLM_BASE_URL", "http://localhost:11434") == "http://host:11434"
+
+
+def test_idle_unload_default():
+    """Простаивающая фоновая служба не должна держать VRAM занятой часами."""
+    assert config.IDLE_UNLOAD_SECONDS == 300.0

@@ -1,7 +1,7 @@
 import json
 import os
 
-from app import analyses, db, job_queue, worker, writers
+from app import analyses, config, db, job_queue, worker, writers
 from app.models import Settings, TranscriptResult, Segment, Word
 from app.progress import ProgressBroker
 from fakes import FakeProvider
@@ -189,3 +189,54 @@ def test_process_analysis_publishes_events_with_analysis_id(tmp_path):
         events.append(q.get_nowait())
     assert events and all(e["analysis_id"] == aid for e in events)
     assert events[-1]["status"] == "done"
+
+
+def _make_worker(tmp_path, engine, provider=None):
+    return worker.Worker(None, ProgressBroker(), engine, lambda: Settings(),
+                         lambda: ["txt"], str(tmp_path / "tmp"), str(tmp_path / "out"),
+                         provider=provider)
+
+
+def test_idle_tick_does_nothing_before_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
+    engine, provider = FakeEngine(), FakeProvider()
+    w = _make_worker(tmp_path, engine, provider)
+    assert w.idle_tick(w._last_active + 100) is False
+    assert engine.unloaded == 0
+    assert provider.unloaded == 0
+
+
+def test_idle_tick_unloads_engine_and_provider_after_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
+    engine, provider = FakeEngine(), FakeProvider()
+    w = _make_worker(tmp_path, engine, provider)
+    assert w.idle_tick(w._last_active + 300) is True
+    assert engine.unloaded == 1
+    assert provider.unloaded == 1
+
+
+def test_idle_tick_does_not_unload_twice_in_same_idle_period(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
+    engine, provider = FakeEngine(), FakeProvider()
+    w = _make_worker(tmp_path, engine, provider)
+    assert w.idle_tick(w._last_active + 300) is True
+    assert w.idle_tick(w._last_active + 400) is False
+    assert engine.unloaded == 1
+    assert provider.unloaded == 1
+
+
+def test_idle_tick_disabled_when_setting_is_zero(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 0)
+    engine, provider = FakeEngine(), FakeProvider()
+    w = _make_worker(tmp_path, engine, provider)
+    assert w.idle_tick(w._last_active + 100000) is False
+    assert engine.unloaded == 0
+    assert provider.unloaded == 0
+
+
+def test_idle_tick_without_provider_unloads_engine_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
+    engine = FakeEngine()
+    w = _make_worker(tmp_path, engine, provider=None)
+    assert w.idle_tick(w._last_active + 300) is True
+    assert engine.unloaded == 1

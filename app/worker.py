@@ -6,7 +6,7 @@ import shutil
 import threading
 import time
 
-from app import analyses, analyze, ffmpeg_tool, job_queue, writers
+from app import analyses, analyze, config, ffmpeg_tool, job_queue, writers
 from app.models import Settings, TranscriptResult
 
 
@@ -157,25 +157,66 @@ class Worker:
         # очередь анализов не трогаем вовсе, Ollama не нужна.
         self.provider = provider
         self._thread: threading.Thread | None = None
+        # Простой отсчитывается с момента запуска воркера (нет работы — нет и
+        # активности) и переустанавливается каждый раз, когда очередная работа
+        # завершена и обе очереди снова проверены (см. run_forever).
+        self._last_active = time.monotonic()
+        self._idle_unloaded = False
+
+    def idle_tick(self, now: float) -> bool:
+        """Выгружает все модели из VRAM, если простой затянулся дольше
+        config.IDLE_UNLOAD_SECONDS. Возвращает True, если в этот вызов выгрузка
+        произошла.
+
+        Не чаще одного раза за простой (флаг сбрасывается, когда воркер берёт
+        следующую работу) — иначе выгрузка дёргалась бы на каждом тике впустую.
+        Обе выгрузки best-effort: сбой одной не должен ронять воркер и не мешает
+        второй."""
+        if config.IDLE_UNLOAD_SECONDS <= 0 or self._idle_unloaded:
+            return False
+        if now - self._last_active < config.IDLE_UNLOAD_SECONDS:
+            return False
+        try:
+            self.engine.unload()
+        except Exception:
+            pass
+        if self.provider is not None:
+            try:
+                self.provider.unload()
+            except Exception:
+                pass
+        self._idle_unloaded = True
+        return True
 
     def run_forever(self, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
             row = job_queue.claim_next(self.conn)
             if row is not None:
+                self._idle_unloaded = False
                 process_job(self.conn, self.broker, self.engine, row,
                             settings_global=self.settings_provider(),
                             formats=self.formats_provider(),
                             tmp_dir=self.tmp_dir, output_dir=self.output_dir,
                             inbox_dir=self.inbox_dir, processed_dir=self.processed_dir)
+                # Простой отсчитывается с момента, когда очередь ОПУСТЕЛА, а не с
+                # момента, когда работа была взята: расшифровка часового видео
+                # длится дольше порога простоя сама по себе, и если отметить
+                # активность на старте, воркер выгрузит модель немедленно вслед
+                # за только что законченной работой — ровно тогда, когда следующий
+                # файл вероятнее всего появится через минуту-другую.
+                self._last_active = time.monotonic()
                 continue
             # Транскрибация в приоритете: за анализ беремся только когда очередь
             # jobs пуста — GPU один, и ждать расшифровки хуже, чем анализа.
             arow = analyses.claim_next(self.conn) if self.provider is not None else None
             if arow is not None:
+                self._idle_unloaded = False
                 process_analysis(self.conn, self.broker, self.engine, self.provider, arow,
                                  settings_global=self.settings_provider(),
                                  output_dir=self.output_dir)
+                self._last_active = time.monotonic()
                 continue
+            self.idle_tick(time.monotonic())
             time.sleep(1.0)
 
     def start(self, stop_event: threading.Event) -> None:

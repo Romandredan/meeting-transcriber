@@ -81,6 +81,12 @@ LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 # полученном токене. Медленный, но живой ответ (счёт в ОЗУ) не убивается.
 LLM_IDLE_TIMEOUT = float(os.environ.get("LLM_IDLE_TIMEOUT", "180"))
 
+# Через сколько секунд простоя (обе очереди — jobs и analyses — пусты) выгружать
+# все модели из видеопамяти. Программа работает как фоновая служба с автозапуском
+# при входе в систему и может часами простаивать между встречами, всё это время
+# держа несколько гигабайт VRAM занятыми. 0 — не выгружать вовсе.
+IDLE_UNLOAD_SECONDS = float(os.environ.get("IDLE_UNLOAD_SECONDS", "300"))
+
 
 def ensure_dirs() -> None:
     for d in (INBOX_DIR, PROCESSED_DIR, OUTPUT_DIR, TMP_DIR, MODELS_DIR):
