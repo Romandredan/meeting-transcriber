@@ -4,14 +4,16 @@ import io
 import json
 import os
 import queue
+import sqlite3
 import zipfile
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import config, job_queue
+from app import analyses, config, job_queue, llm, templates_store
 from app.models import Settings
 
 WEB_DIR = config.BASE_DIR / "web"
@@ -25,6 +27,18 @@ class JobIn(BaseModel):
 class SettingsIn(BaseModel):
     settings: dict
     formats: list[str]
+
+
+class TemplateIn(BaseModel):
+    label: str
+    display_name: str
+    description: str = ""
+    prompt_body: str
+    enabled: bool = True
+
+
+class AnalysisIn(BaseModel):
+    label: str
 
 
 def create_app(conn, broker, settings_state) -> FastAPI:
@@ -104,6 +118,93 @@ def create_app(conn, broker, settings_state) -> FastAPI:
                 broker.unsubscribe(q)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.get("/api/llm/health")
+    def llm_health():
+        # Роут есть всегда: фронт по нему решает, показывать ли блок анализов.
+        if not config.ANALYZE_ENABLED:
+            return {"enabled": False}
+        return {"enabled": True, **llm.make_provider().health()}
+
+    # Флаг читаем в момент вызова create_app: при ANALYZE_ENABLED=false роутов
+    # анализа не существует вовсе, и установленная Ollama не требуется.
+    if config.ANALYZE_ENABLED:
+
+        @app.get("/api/templates")
+        def list_templates():
+            return [dict(r) for r in templates_store.list_templates(conn)]
+
+        @app.post("/api/templates")
+        def create_template(body: TemplateIn):
+            try:
+                tid = templates_store.create(conn, body.label, body.display_name,
+                                             body.description, body.prompt_body,
+                                             body.enabled)
+            except sqlite3.IntegrityError:
+                raise HTTPException(400, f"метка «{body.label}» уже занята")
+            return {"id": tid}
+
+        @app.put("/api/templates/{template_id}")
+        def update_template(template_id: int, body: TemplateIn):
+            if templates_store.get(conn, template_id) is None:
+                raise HTTPException(404, "шаблон не найден")
+            try:
+                templates_store.update(conn, template_id, label=body.label,
+                                       display_name=body.display_name,
+                                       description=body.description,
+                                       prompt_body=body.prompt_body,
+                                       enabled=body.enabled)
+            except sqlite3.IntegrityError:
+                raise HTTPException(400, f"метка «{body.label}» уже занята")
+            return {"ok": True}
+
+        @app.delete("/api/templates/{template_id}")
+        def delete_template(template_id: int):
+            templates_store.delete(conn, template_id)
+            return {"ok": True}
+
+        @app.post("/api/jobs/{job_id}/analyses")
+        def create_analysis(job_id: int, body: AnalysisIn):
+            job = job_queue.get(conn, job_id)
+            if job is None:
+                raise HTTPException(404, "встреча не найдена")
+            if job["status"] != "done":
+                raise HTTPException(400, "встреча ещё не расшифрована")
+            tpl = templates_store.get_by_label(conn, body.label)
+            if tpl is None or not tpl["enabled"]:
+                raise HTTPException(400, f"шаблон «{body.label}» недоступен")
+            job_out = job["output_dir"] or ""
+            basename = os.path.splitext(job["filename"])[0]
+            if not os.path.isfile(os.path.join(job_out, f"{basename}.json")):
+                raise HTTPException(400, "нет файла транскрипта — расшифруйте встречу заново")
+            aid = analyses.enqueue(conn, job_id, tpl["label"], tpl["display_name"],
+                                   tpl["prompt_body"], config.LLM_MODEL)
+            return {"id": aid}
+
+        @app.get("/api/jobs/{job_id}/analyses")
+        def list_analyses(job_id: int):
+            return [dict(r) for r in analyses.list_for_job(conn, job_id)]
+
+        @app.get("/api/analyses/{analysis_id}/download")
+        def download_analysis(analysis_id: int):
+            row = analyses.get(conn, analysis_id)
+            if row is None or row["status"] != "done" or not row["result_md"]:
+                raise HTTPException(404, "результат недоступен")
+            # Из БД, а не с диска: на диске лежит только последняя версия по метке,
+            # а качать можно и старую.
+            job = job_queue.get(conn, row["job_id"])
+            base = os.path.splitext(job["filename"])[0] if job else f"analysis_{analysis_id}"
+            name = f"{base}.{row['label']}.md"
+            return Response(
+                content=row["result_md"], media_type="text/markdown; charset=utf-8",
+                headers={"Content-Disposition":
+                         f'attachment; filename="analysis_{analysis_id}.md"; '
+                         f"filename*=UTF-8''{quote(name)}"})
+
+        @app.delete("/api/analyses/{analysis_id}")
+        def delete_analysis(analysis_id: int):
+            analyses.delete(conn, analysis_id)
+            return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
     def index():
