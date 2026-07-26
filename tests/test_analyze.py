@@ -1,5 +1,8 @@
+import pytest
+
 from app import analyze
 from app.models import Segment, TranscriptResult, Word
+from fakes import FakeProvider
 
 
 def result_from(pairs, diarized=True):
@@ -120,3 +123,110 @@ def test_chunk_replicas_empty_input_returns_empty_list():
 
 def test_transcript_replicas_empty_segments_returns_empty_list():
     assert analyze.transcript_replicas(result_from([])) == []
+
+
+def long_result(n_replicas=8, chars=400):
+    """Транскрипт, который заведомо не влезает в маленькое окно.
+
+    Спикеры чередуются: иначе merge_speaker_runs склеит всё в одну реплику."""
+    return result_from([(float(i), f"SPEAKER_{i % 2:02d}", "я" * chars)
+                        for i in range(n_replicas)])
+
+
+def test_single_call_when_transcript_fits():
+    p = FakeProvider(["# Протокол\nвсё хорошо"])
+    out = analyze.run_analysis(p, long_result(3, 200), "тело шаблона", num_ctx=32768)
+    assert out == "# Протокол\nвсё хорошо"
+    assert len(p.calls) == 1
+    assert "тело шаблона" in p.calls[0][1]
+
+
+def test_map_reduce_when_transcript_does_not_fit():
+    """Не влезло — чанки в MAP нейтральным промптом, затем один REDUCE шаблоном."""
+    p = FakeProvider(default="заметка")
+    out = analyze.run_analysis(p, long_result(8, 400), "тело шаблона", num_ctx=2000)
+    assert out == "заметка"
+    assert len(p.calls) > 2
+    assert all(analyze.MAP_PROMPT[:40] in user for _, user in p.calls[:-1])
+    assert "тело шаблона" in p.calls[-1][1]
+    assert analyze.MAP_PROMPT[:40] not in p.calls[-1][1]
+
+
+def test_glossary_from_vocabulary_reaches_system_prompt():
+    """settings.vocabulary лечит «Битрикс24 → Bittrex 24» без новой сущности."""
+    p = FakeProvider(["итог"])
+    analyze.run_analysis(p, long_result(3, 200), "тело", num_ctx=32768,
+                         vocabulary="АккордПост, ОФД")
+    assert "АккордПост" in p.calls[0][0]
+
+
+def test_empty_vocabulary_adds_no_glossary_section():
+    p = FakeProvider(["итог"])
+    analyze.run_analysis(p, long_result(3, 200), "тело", num_ctx=32768)
+    assert "Правильные написания" not in p.calls[0][0]
+
+
+def test_progress_reports_map_and_reduce_stages():
+    seen = []
+    analyze.run_analysis(FakeProvider(default="з"), long_result(8, 400), "тело",
+                         num_ctx=2000, report=lambda s, p: seen.append(s))
+    assert any(s.startswith("map 1/") for s in seen)
+    assert "reduce" in seen
+
+
+def test_notes_are_folded_recursively_until_they_fit():
+    """Заметки MAP не влезли в REDUCE — сворачиваются ещё раз."""
+    big = "з" * 2000     # ~834 токена: две таких заметки в бюджет не влезают
+    p = FakeProvider([big, big, "коротко", "коротко", "# Итог"])
+    out = analyze.run_analysis(p, long_result(8, 400), "тело", num_ctx=2000,
+                               report=lambda s, pr: None)
+    assert out == "# Итог"
+    assert len(p.calls) == 5      # 2 map + 2 fold + 1 reduce
+
+
+def test_fold_reports_its_own_stage():
+    big = "з" * 2000
+    seen = []
+    p = FakeProvider([big, big, "коротко", "коротко", "# Итог"])
+    analyze.run_analysis(p, long_result(8, 400), "тело", num_ctx=2000,
+                         report=lambda s, pr: seen.append(s))
+    assert any(s.startswith("fold 1") for s in seen)
+
+
+def test_error_when_fold_does_not_converge():
+    """Свёртка не уменьшает объём — останавливаемся, а не крутимся вечно."""
+    p = FakeProvider(default="з" * 2000)
+    with pytest.raises(analyze.AnalyzeError) as e:
+        analyze.run_analysis(p, long_result(8, 400), "тело", num_ctx=2000)
+    assert "не сходится" in str(e.value)
+
+
+def test_failed_call_is_retried():
+    p = FakeProvider([RuntimeError("оборвалось"), "# Протокол"])
+    out = analyze.run_analysis(p, long_result(3, 200), "тело", num_ctx=32768)
+    assert out == "# Протокол"
+    assert len(p.calls) == 2
+
+
+def test_blank_answer_counts_as_failure_and_is_retried():
+    p = FakeProvider(["   ", "# Протокол"])
+    assert analyze.run_analysis(p, long_result(3, 200), "тело", num_ctx=32768) == "# Протокол"
+
+
+def test_whole_analysis_fails_after_retries_exhausted():
+    """Частичный документ не собираем НИКОГДА: он выглядит как полноценный протокол,
+    но молча теряет решения из пропущенного куска."""
+    p = FakeProvider([RuntimeError("раз"), RuntimeError("два"), RuntimeError("три")])
+    with pytest.raises(analyze.AnalyzeError) as e:
+        analyze.run_analysis(p, long_result(3, 200), "тело", num_ctx=32768)
+    assert "три" in str(e.value)
+    assert len(p.calls) == analyze.MAX_ATTEMPTS
+
+
+def test_error_on_too_short_transcript():
+    p = FakeProvider()
+    with pytest.raises(analyze.AnalyzeError) as e:
+        analyze.run_analysis(p, result_from([(0.0, "SPEAKER_00", "ага")]), "тело",
+                             num_ctx=32768)
+    assert "слишком короткий" in str(e.value)
+    assert p.calls == []

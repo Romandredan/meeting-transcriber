@@ -121,3 +121,131 @@ def chunk_replicas(replicas: list[str], max_tokens: int,
     if cur:
         chunks.append(cur)
     return chunks
+
+
+MAX_ATTEMPTS = 3        # первая попытка + две повторные
+
+SYSTEM_PROMPT = (
+    "Ты превращаешь расшифровку рабочей встречи в структурированный документ.\n"
+    "Опирайся только на то, что есть в расшифровке: ничего не додумывай и не "
+    "дописывай выводов, которых не прозвучало. Чего в записи нет — так и пиши, "
+    "а не выдумывай.\n"
+    "Расшифровка автоматическая: имена, термины и цифры могут быть распознаны с "
+    "ошибками, реплики иногда обрываются. Время в квадратных скобках — от начала "
+    "записи.\n"
+    "Отвечай по-русски, в Markdown, без вступлений вроде «Конечно» и без "
+    "рассуждений о том, как ты работаешь."
+)
+
+MAP_PROMPT = (
+    "Ниже — фрагмент расшифровки встречи. Выпиши из него тезисно, без вводных слов:\n"
+    "- факты и цифры;\n"
+    "- принятые решения;\n"
+    "- задачи с ответственными и сроками;\n"
+    "- открытые вопросы и разногласия;\n"
+    "- имена участников и упомянутые названия.\n"
+    "Только то, что есть во фрагменте. Не обобщай и не сокращай смысл — эти заметки "
+    "пойдут на вход следующему шагу, а не человеку.\n\n"
+    "Фрагмент:"
+)
+
+GLOSSARY_HEADER = (
+    "\n\nПравильные написания терминов и имён, звучавших на встрече. Если в "
+    "расшифровке они искажены — используй эти написания:\n"
+)
+
+
+def build_system_prompt(vocabulary: str) -> str:
+    """Системная часть + глоссарий из settings.vocabulary.
+
+    Тот же словарь уже кормит initial_prompt Whisper; здесь он лечит остаточные
+    искажения («Битрикс24 → Bittrex 24») без новой сущности в настройках."""
+    vocabulary = (vocabulary or "").strip()
+    if not vocabulary:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + GLOSSARY_HEADER + vocabulary
+
+
+def _call(provider, system: str, user: str) -> str:
+    """Вызов модели с повторами. Пустой ответ считаем сбоем: единичный вырожденный
+    ответ закрывается повтором, а systemic-отказ (демон упал) всё равно исчерпает
+    попытки и уронит весь анализ — что и требуется."""
+    last: Exception | None = None
+    for _ in range(MAX_ATTEMPTS):
+        try:
+            out = provider.generate(system, user)
+            if out and out.strip():
+                return out.strip()
+            last = RuntimeError("модель вернула пустой ответ")
+        except AnalyzeError:
+            raise
+        except Exception as e:
+            last = e
+    raise AnalyzeError(f"вызов модели не удался после {MAX_ATTEMPTS} попыток: {last}")
+
+
+def _total_tokens(notes: list[str]) -> int:
+    return estimate_tokens("\n\n".join(notes))
+
+
+def run_analysis(provider, result: TranscriptResult, prompt_body: str, *,
+                 num_ctx: int, vocabulary: str = "", report=None) -> str:
+    """Полный конвейер анализа. Возвращает markdown или бросает AnalyzeError.
+
+    Частичных результатов не бывает: если хоть один вызов не прошёл после повторов,
+    падает весь анализ. Документ, собранный без части встречи, выглядит как
+    полноценный протокол, но молча теряет решения из пропущенного куска — пометка
+    в шапке этого не лечит, потому что выводы уже искажены."""
+    def say(stage: str, progress: float) -> None:
+        if report is not None:
+            report(stage, progress)
+
+    replicas = transcript_replicas(result)
+    text = "\n".join(replicas)
+    if len(text) < MIN_TRANSCRIPT_CHARS:
+        raise AnalyzeError("слишком короткий транскрипт для анализа")
+
+    system = build_system_prompt(vocabulary)
+    budget = (num_ctx - estimate_tokens(system) - estimate_tokens(prompt_body)
+              - OUTPUT_RESERVE_TOKENS)
+    if budget <= 0:
+        raise AnalyzeError(
+            f"окно контекста {num_ctx} токенов слишком мало для этого шаблона — "
+            f"увеличьте LLM_NUM_CTX или укоротите промпт")
+
+    # Влезает целиком — один вызов, самый точный вариант.
+    if estimate_tokens(text) <= budget:
+        say("analyze", 0.1)
+        return _call(provider, system, f"{prompt_body}\n\n{text}")
+
+    # MAP: чанки размером в половину окна — вход и заметки должны ужиться вместе.
+    chunks = chunk_replicas(replicas, max_tokens=max(1, num_ctx // 2),
+                            diarized=result.diarized)
+    notes: list[str] = []
+    for i, chunk in enumerate(chunks, 1):
+        say(f"map {i}/{len(chunks)}", 0.05 + 0.75 * i / len(chunks))
+        notes.append(_call(provider, system, f"{MAP_PROMPT}\n\n" + "\n".join(chunk)))
+
+    # Заметки не влезают в REDUCE — сворачиваем их рекурсивно до сходимости.
+    # Жёсткого лимита глубины нет: любой транскрипт рано или поздно сворачивается.
+    # Единственная защита — прогресс: проход, не уменьшивший объём, значит поломку.
+    # Заметки — не реплики: у них нет ни таймкода, ни спикера, поэтому чанкинг
+    # здесь идёт с diarized=False (не искать несуществующий префикс спикера) и
+    # overlap=0 (перекрытие уже сделано на MAP, дублировать его незачем).
+    level = 1
+    while _total_tokens(notes) > budget:
+        before = _total_tokens(notes)
+        groups = chunk_replicas(notes, max_tokens=max(1, num_ctx // 2), overlap=0,
+                                diarized=False)
+        folded: list[str] = []
+        for i, group in enumerate(groups, 1):
+            say(f"fold {level} · {i}/{len(groups)}", 0.8)
+            folded.append(_call(provider, system, f"{MAP_PROMPT}\n\n" + "\n\n".join(group)))
+        if _total_tokens(folded) >= before:
+            raise AnalyzeError(
+                "свёртка не сходится: очередной проход не уменьшил объём заметок")
+        notes = folded
+        level += 1
+
+    say("reduce", 0.9)
+    return _call(provider, system, f"{prompt_body}\n\n" + "\n\n".join(notes))
