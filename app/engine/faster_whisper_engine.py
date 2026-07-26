@@ -51,3 +51,9 @@ class FasterWhisperEngine:
             language=info.language, duration=duration,
             model=settings.model, diarized=diarized, segments=segments,
         )
+
+    def unload(self) -> None:
+        """Выбрасывает кэш моделей и освобождает VRAM под локальную LLM."""
+        import gc
+        self._models.clear()
+        gc.collect()

@@ -9,6 +9,12 @@ class TranscriptEngine(Protocol):
     def transcribe(self, audio_path: str, settings: Settings,
                    progress: Callable[[str, float], None]) -> TranscriptResult: ...
 
+    def unload(self) -> None:
+        """Освободить видеопамять: перед вызовом локальной LLM модель Whisper должна
+        уйти из VRAM, иначе 14B рядом с ней не помещается. Перезагрузка на следующей
+        транскрибации стоит единицы секунд — обработка фоновая, это приемлемо."""
+        ...
+
 
 def truncate_prompt(vocabulary: str, max_words: int = 200) -> str:
     words = vocabulary.split()

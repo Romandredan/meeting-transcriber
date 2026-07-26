@@ -60,3 +60,15 @@ class TransformersWhisperEngine:
         duration = segments[-1].end if segments else 0.0
         return TranscriptResult(language=settings.language or "ru", duration=duration,
                                 model=settings.model, diarized=diarized, segments=segments)
+
+    def unload(self) -> None:
+        """Выбрасывает кэш пайплайнов и освобождает VRAM под локальную LLM."""
+        import gc
+        self._pipes.clear()
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass   # torch может быть не установлен — не повод падать

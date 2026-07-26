@@ -21,3 +21,20 @@ def test_build_segments_normalizes():
     assert segs[0].text == " привет"
     assert segs[0].words[0].text == "привет"
     assert segs[0].words[0].score == 0.9
+
+
+def test_faster_whisper_unload_clears_cached_models():
+    from app.engine.faster_whisper_engine import FasterWhisperEngine
+    eng = FasterWhisperEngine()
+    eng._models["large-v3"] = object()   # как будто модель уже загружена
+    eng.unload()
+    assert eng._models == {}
+    eng.unload()                          # повторный вызов безопасен
+
+
+def test_transformers_unload_clears_cached_pipes():
+    from app.engine.transformers_engine import TransformersWhisperEngine
+    eng = TransformersWhisperEngine()
+    eng._pipes["large-v3"] = object()
+    eng.unload()
+    assert eng._pipes == {}
