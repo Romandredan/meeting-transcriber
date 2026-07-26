@@ -19,8 +19,13 @@ class ProgressBroker:
         with self._lock:
             self._subs.discard(q)
 
-    def publish(self, job_id: int, stage: str, progress: float, status: str) -> None:
-        evt = {"job_id": job_id, "stage": stage, "progress": progress, "status": status}
+    def publish(self, job_id: int, stage: str, progress: float, status: str,
+                analysis_id: int | None = None) -> None:
+        # analysis_id — последним и со значением по умолчанию: все существующие
+        # вызовы передают аргументы позиционно. Для транскрибации он None, и
+        # фронт по нему отличает события анализа от событий job'а.
+        evt = {"job_id": job_id, "stage": stage, "progress": progress,
+               "status": status, "analysis_id": analysis_id}
         with self._lock:
             subs = list(self._subs)
         for q in subs:
