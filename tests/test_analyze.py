@@ -184,6 +184,33 @@ def test_notes_are_folded_recursively_until_they_fit():
     assert len(p.calls) == 5      # 2 map + 2 fold + 1 reduce
 
 
+def test_fold_uses_fold_prompt_not_map_prompt():
+    """Свёртка консолидирует уже извлечённые заметки — ей нужен свой промпт,
+    который просит сжимать, а не MAP_PROMPT, который прямо запрещает сокращать."""
+    big = "з" * 2000
+    p = FakeProvider([big, big, "коротко", "коротко", "# Итог"])
+    analyze.run_analysis(p, long_result(8, 400), "тело", num_ctx=2000)
+    map_calls, fold_calls = p.calls[:2], p.calls[2:4]
+    assert all(analyze.MAP_PROMPT[:40] in user for _, user in map_calls)
+    assert all(analyze.FOLD_PROMPT[:40] in user for _, user in fold_calls)
+    assert all(analyze.MAP_PROMPT[:40] not in user for _, user in fold_calls)
+
+
+def test_fold_recurses_through_two_levels():
+    """Первый проход свёртки уменьшает объём, но всё ещё не влезает в бюджет —
+    должен пройти второй проход, а не свалиться в «не сходится»."""
+    big = "з" * 2000
+    mid = "с" * 1000     # короче исходных заметок, но вдвоём ещё не влезают
+    p = FakeProvider([big, big, mid, mid, "коротко", "# Итог"])
+    seen = []
+    out = analyze.run_analysis(p, long_result(8, 400), "тело", num_ctx=2000,
+                               report=lambda s, pr: seen.append(s))
+    assert out == "# Итог"
+    assert len(p.calls) == 6    # 2 map + 2 fold(уровень 1) + 1 fold(уровень 2) + 1 reduce
+    assert any(s.startswith("fold 1") for s in seen)
+    assert any(s.startswith("fold 2") for s in seen)
+
+
 def test_fold_reports_its_own_stage():
     big = "з" * 2000
     seen = []
