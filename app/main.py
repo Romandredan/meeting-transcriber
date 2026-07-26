@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from app import config, db, job_queue
+from app import analyses, config, db, job_queue, llm, templates_store
 from app.api import create_app
 from app.engine.factory import make_engine
 from app.progress import ProgressBroker
@@ -18,6 +18,18 @@ recovered = job_queue.recover_stuck(conn)
 if recovered:
     print(f"Восстановлено зависших job'ов: {recovered}")
 
+# Стадия analyze: провайдера нет — воркер не заглядывает в очередь анализов,
+# Ollama не требуется, приложение работает ровно как раньше.
+provider = None
+if config.ANALYZE_ENABLED:
+    seeded = templates_store.seed_defaults(conn)
+    if seeded:
+        print(f"Добавлено дефолтных шаблонов анализа: {seeded}")
+    recovered_a = analyses.recover_stuck(conn)
+    if recovered_a:
+        print(f"Восстановлено зависших анализов: {recovered_a}")
+    provider = llm.make_provider()
+
 broker = ProgressBroker()
 settings_state = SettingsStore(conn)  # переживает перезапуск (таблица settings)
 stop_event = threading.Event()
@@ -26,7 +38,8 @@ engine = make_engine("auto")
 worker = Worker(conn, broker, engine, settings_state.get_global,
                 settings_state.get_formats, str(config.TMP_DIR), str(config.OUTPUT_DIR),
                 inbox_dir=str(config.INBOX_DIR),
-                processed_dir=str(config.PROCESSED_DIR) if config.MOVE_PROCESSED else None)
+                processed_dir=str(config.PROCESSED_DIR) if config.MOVE_PROCESSED else None,
+                provider=provider)
 worker.start(stop_event)
 
 def _enqueue_from_inbox(path: str) -> None:
