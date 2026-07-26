@@ -28,6 +28,18 @@ def test_estimate_tokens_uses_russian_ratio():
     assert analyze.estimate_tokens("a" * 32471) >= 13283
 
 
+def test_fold_prompt_guarantee_covers_names():
+    """Гарантия сохранения в FOLD_PROMPT перечисляет факты/решения/задачи/вопросы,
+    но не имена участников — ровно то, ради чего заведён глоссарий, и терять их
+    на свёртке обиднее всего. '"имена" in FOLD_PROMPT' был бы ложно-зелёным: слово
+    уже встречается в списке пунктов выше по тексту — проверяем именно гарантийное
+    предложение, начинающееся с «Сохрани»."""
+    start = analyze.FOLD_PROMPT.index("Сохрани")
+    end = analyze.FOLD_PROMPT.index(".", start)
+    guarantee = analyze.FOLD_PROMPT[start:end]
+    assert "имена" in guarantee
+
+
 def test_transcript_replicas_format_and_merge():
     """Формат '[MM:SS] Спикер N: текст'; подряд идущие реплики одного спикера склеены
     той же функцией, что и в TXT, — иначе анализ и протокол разъедутся."""
