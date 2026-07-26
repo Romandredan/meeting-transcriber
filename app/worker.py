@@ -109,7 +109,17 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
         if not os.path.isfile(json_path):
             raise RuntimeError(f"нет файла транскрипта: {json_path}")
         with open(json_path, encoding="utf-8") as f:
-            result = TranscriptResult.from_dict(json.load(f))
+            raw = f.read()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Отдельный перехват: json.JSONDecodeError.__str__ — английский текст
+            # ("Expecting value: line 1 column 1..."), а тексты ошибок в проекте
+            # по-русски и должны быть понятны не разработчику, а пользователю.
+            raise RuntimeError(
+                f"файл транскрипта повреждён: {json_path} — расшифруйте встречу заново"
+            ) from e
+        result = TranscriptResult.from_dict(data)
 
         report("unload", 0.02)
         engine.unload()   # освобождаем VRAM под LLM

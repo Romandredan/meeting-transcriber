@@ -191,6 +191,25 @@ def test_process_analysis_publishes_events_with_analysis_id(tmp_path):
     assert events[-1]["status"] == "done"
 
 
+def test_process_analysis_marks_error_with_russian_text_on_corrupted_json(tmp_path):
+    """json.JSONDecodeError.__str__ — английский текст; пользователю должен
+    достаться русский, без утечки исходного сообщения библиотеки."""
+    conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
+    jid, out_dir = _job_with_transcript(conn, tmp_path)
+    json_path = os.path.join(out_dir, str(jid), "a.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        f.write("это не json{{{")
+    aid = analyses.enqueue(conn, jid, "protocol", "Протокол", "тело", "m")
+    row = analyses.claim_next(conn)
+    worker.process_analysis(conn, ProgressBroker(), FakeEngine(), FakeProvider(), row,
+                            settings_global=Settings(), output_dir=out_dir)
+    err = analyses.get(conn, aid)
+    assert err["status"] == "error"
+    assert "повреждён" in err["error"]
+    assert "заново" in err["error"]
+    assert "Expecting" not in err["error"]  # не утекает англ. текст json.JSONDecodeError
+
+
 def _make_worker(tmp_path, engine, provider=None):
     return worker.Worker(None, ProgressBroker(), engine, lambda: Settings(),
                          lambda: ["txt"], str(tmp_path / "tmp"), str(tmp_path / "out"),
