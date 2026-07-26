@@ -42,6 +42,23 @@
       <p class="hint">Надёжнее всего — положить файлы в папку <code>inbox/</code> или вставить полные пути вручную.</p>
     </section>
 
+    <section id="templates" hidden>
+      <h2>Шаблоны анализа</h2>
+      <p class="hint" id="llm-status"></p>
+      <div id="templates-list"></div>
+      <details>
+        <summary>Добавить или изменить шаблон</summary>
+        <input type="hidden" id="tpl-id">
+        <label>Метка (латиницей, уникальная) <input id="tpl-label" placeholder="protocol"></label>
+        <label>Название <input id="tpl-name" placeholder="Протокол встречи"></label>
+        <label>Описание <input id="tpl-desc" placeholder="для будущей авто-классификации"></label>
+        <label>Промпт <textarea id="tpl-body" rows="10" placeholder="Составь протокол встречи по расшифровке ниже..."></textarea></label>
+        <label><input type="checkbox" id="tpl-enabled" checked> Включён</label>
+        <button id="tpl-save">Сохранить шаблон</button>
+        <button id="tpl-reset">Очистить форму</button>
+      </details>
+    </section>
+
     <section id="queue">
       <h2>Очередь</h2>
       <div id="jobs"></div>

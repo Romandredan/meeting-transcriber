@@ -18,3 +18,12 @@ button { background: #3b82f6; color: #fff; border: 0; border-radius: 6px; paddin
 .status-error { border-color: #ef4444; }
 .hint { color: #9aa4b2; font-size: 13px; }
 a { color: #8ab4ff; margin-right: 10px; }
+#templates { grid-column: 1 / -1; }
+.tpl-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #262b36; }
+.tpl-row b { flex: 1; }
+.tpl-row.off b { color: #9aa4b2; text-decoration: line-through; }
+.analyze { margin-top: 10px; border-top: 1px solid #262b36; padding-top: 8px; }
+.analyze select { width: auto; margin-right: 8px; }
+.analyses details { margin: 6px 0; }
+.analyses pre { white-space: pre-wrap; word-break: break-word; background: #0f1115; border: 1px solid #262b36; border-radius: 6px; padding: 10px; max-height: 420px; overflow: auto; }
+.a-run { color: #9aa4b2; font-size: 13px; margin: 4px 0; }
