@@ -30,6 +30,25 @@ def _get_pipeline(hf_token: str | None):
     return _PIPELINE
 
 
+def unload_pipeline() -> None:
+    """Освобождает пайплайн диаризации из VRAM.
+
+    _PIPELINE — модульный глобал, отдельный от кэшей движков Whisper (self._models /
+    self._pipes): диаризация используется ОБОИМИ движками, поэтому её выгрузка не
+    может жить внутри ни одного из них — только здесь, общей точкой для обоих
+    unload(). Best-effort: torch может быть не установлен."""
+    global _PIPELINE
+    _PIPELINE = None
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass   # torch может быть не установлен — не повод падать
+
+
 def load_waveform(path: str):
     """Читает 16 kHz mono PCM s16le WAV в тензор (1, time) float32 — без torchcodec/torchaudio.
 

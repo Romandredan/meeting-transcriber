@@ -62,7 +62,10 @@ class TransformersWhisperEngine:
                                 model=settings.model, diarized=diarized, segments=segments)
 
     def unload(self) -> None:
-        """Выбрасывает кэш пайплайнов и освобождает VRAM под локальную LLM."""
+        """Выбрасывает кэш пайплайнов и освобождает VRAM под локальную LLM.
+
+        Заодно выгружает пайплайн диаризации (общий для обоих движков глобал в
+        app.diarize) — этот движок тоже может идти с diarize=True."""
         import gc
         self._pipes.clear()
         gc.collect()
@@ -72,3 +75,5 @@ class TransformersWhisperEngine:
                 torch.cuda.empty_cache()
         except Exception:
             pass   # torch может быть не установлен — не повод падать
+        from app.diarize import unload_pipeline
+        unload_pipeline()

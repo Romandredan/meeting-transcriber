@@ -53,7 +53,14 @@ class FasterWhisperEngine:
         )
 
     def unload(self) -> None:
-        """Выбрасывает кэш моделей и освобождает VRAM под локальную LLM."""
+        """Выбрасывает кэш моделей и освобождает VRAM под локальную LLM.
+
+        Заодно выгружает пайплайн диаризации (общий для обоих движков глобал в
+        app.diarize, включая её собственный torch.cuda.empty_cache()) — путь
+        диаризации использует torch под обоими движками, а не только под
+        transformers-fallback."""
         import gc
         self._models.clear()
         gc.collect()
+        from app.diarize import unload_pipeline
+        unload_pipeline()

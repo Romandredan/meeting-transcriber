@@ -38,3 +38,31 @@ def test_transformers_unload_clears_cached_pipes():
     eng._pipes["large-v3"] = object()
     eng.unload()
     assert eng._pipes == {}
+
+
+def test_faster_whisper_unload_clears_diarization_pipeline():
+    """Диаризация делит VRAM с Whisper и LLM — выгрузка движка должна освобождать
+    и её глобальный пайплайн, а не только кэш моделей Whisper."""
+    import app.diarize as diarize_module
+    from app.engine.faster_whisper_engine import FasterWhisperEngine
+    diarize_module._PIPELINE = object()   # как будто пайплайн уже загружен на GPU
+    eng = FasterWhisperEngine()
+    eng.unload()
+    assert diarize_module._PIPELINE is None
+
+
+def test_transformers_unload_clears_diarization_pipeline():
+    import app.diarize as diarize_module
+    from app.engine.transformers_engine import TransformersWhisperEngine
+    diarize_module._PIPELINE = object()
+    eng = TransformersWhisperEngine()
+    eng.unload()
+    assert diarize_module._PIPELINE is None
+
+
+def test_diarize_unload_pipeline_resets_global_without_loading_models():
+    import app.diarize as diarize_module
+    diarize_module._PIPELINE = object()
+    diarize_module.unload_pipeline()
+    assert diarize_module._PIPELINE is None
+    diarize_module.unload_pipeline()   # повторный вызов безопасен (уже None)
