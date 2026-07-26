@@ -150,11 +150,14 @@ function analysisRow(a, isLatest) {
     return `<div class="a-run">${esc(a.display_name)}: ${esc(a.status)}
       <span id="astage-${a.id}">${esc(a.stage || "")}</span>${err}</div>`;
   }
+  // Как и основная кнопка «Анализ»: при недоступной Ollama клик тут же уйдёт в
+  // ошибку, потратив впустую место в очереди — блокируем её так же.
+  const off = LLM.ok ? "" : "disabled";
   return `<details id="a-${a.id}" ${isLatest ? "open" : ""}>
       <summary>${esc(a.display_name)} · ${esc(a.created_at)} · ${esc(a.model)}</summary>
       <pre>${esc(a.result_md)}</pre>
       <button class="copy-analysis" data-id="${a.id}">Скопировать</button>
-      <button class="run-analysis" data-job="${a.job_id}" data-label="${esc(a.label)}">Ещё раз</button>
+      <button class="run-analysis" data-job="${a.job_id}" data-label="${esc(a.label)}" ${off}>Ещё раз</button>
       <a href="/api/analyses/${a.id}/download">скачать .md</a>
       <button class="del-analysis" data-id="${a.id}">Удалить</button>
     </details>`;
@@ -163,6 +166,10 @@ function analysisRow(a, isLatest) {
 async function loadAnalyses(jobId) {
   const box = $(`analyses-${jobId}`);
   if (!box) return;
+  // Состояние представления (что раскрыто), а не данных — переживает перерисовку.
+  // Опрашивается здесь, а не в refresh(): loadAnalyses зовётся также из SSE и клика
+  // по «Ещё раз»/«Удалить», и без этого раскрытые карточки схлопывались бы и там.
+  const openIds = new Set([...box.querySelectorAll("details[open]")].map((d) => d.id));
   const list = await (await fetch(`/api/jobs/${jobId}/analyses`)).json();
   const seen = new Set();
   box.innerHTML = list.map((a) => {
@@ -171,6 +178,10 @@ async function loadAnalyses(jobId) {
     if (latest) seen.add(a.label);
     return analysisRow(a, latest);
   }).join("");
+  for (const id of openIds) {
+    const el = document.getElementById(id);
+    if (el) el.open = true;
+  }
 }
 
 function jobCard(j) {
@@ -187,8 +198,18 @@ function jobCard(j) {
 }
 
 async function refresh() {
+  // Выбранный шаблон — состояние представления, а не данных: перерисовка карточек
+  // каждые 5 секунд не должна молча возвращать пользователя к первому шаблону в списке.
+  const picks = {};
+  document.querySelectorAll(".tpl-pick").forEach((sel) => { picks[sel.id] = sel.value; });
   const jobs = await (await fetch("/api/jobs")).json();
   $("jobs").innerHTML = jobs.map(jobCard).join("") || "<p class=hint>Очередь пуста</p>";
+  for (const [id, value] of Object.entries(picks)) {
+    const sel = document.getElementById(id);
+    // Восстанавливаем, только если такой вариант всё ещё есть (шаблон могли
+    // удалить/выключить между обновлениями) — иначе браузер молча возьмёт первый.
+    if (sel && [...sel.options].some((o) => o.value === value)) sel.value = value;
+  }
   if (LLM.enabled) {
     for (const j of jobs) if (j.status === "done") loadAnalyses(j.id);
   }
