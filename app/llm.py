@@ -44,14 +44,19 @@ class OllamaProvider:
         )
 
     def _explain(self, exc: Exception) -> str:
-        if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
-            return (f"модель `{self.model}` не установлена, "
-                    f"выполните `ollama pull {self.model}`")
+        if isinstance(exc, urllib.error.HTTPError):
+            if exc.code == 404:
+                return (f"модель `{self.model}` не установлена, "
+                        f"выполните `ollama pull {self.model}`")
+            # HTTPError — подкласс URLError, поэтому проверяем ДО общей ветки URLError:
+            # иначе, например, 500 (неудачная загрузка модели) объяснялся бы как
+            # «Ollama не отвечает» — ложный совет при живом, но упавшем демоне.
+            return f"Ollama ответила ошибкой {exc.code}: {exc.reason}"
         if isinstance(exc, urllib.error.URLError):
             return f"Ollama не отвечает на {self.base_url} — запустите Ollama"
         return f"{type(exc).__name__}: {exc}"
 
-    def _chat(self, messages: list[dict], keep_alive) -> str:
+    def _chat(self, messages: list[dict], keep_alive, timeout: float | None = None) -> str:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -59,8 +64,9 @@ class OllamaProvider:
             "keep_alive": keep_alive,
             "options": {"num_ctx": self.num_ctx, "temperature": self.temperature},
         }
+        effective_timeout = self.idle_timeout if timeout is None else timeout
         try:
-            stream = _open(self._request("/api/chat", payload), self.idle_timeout)
+            stream = _open(self._request("/api/chat", payload), effective_timeout)
         except urllib.error.URLError as e:      # HTTPError — подкласс URLError
             raise LlmError(self._explain(e)) from e
         parts: list[str] = []
@@ -71,7 +77,7 @@ class OllamaProvider:
                     line = stream.readline()
                 except socket.timeout as e:
                     raise LlmError(
-                        f"Ollama не отвечает {self.idle_timeout:.0f} с — "
+                        f"Ollama не отвечает {effective_timeout:.0f} с — "
                         f"ни одного токена; возможно, модель зависла") from e
                 if not line:
                     break
@@ -110,11 +116,15 @@ class OllamaProvider:
             keep_alive="5m",
         )
 
-    def unload(self) -> None:
+    def unload(self, timeout: float = 5.0) -> None:
         """keep_alive=0 — Ollama выгружает модель и освобождает видеопамять
-        под следующую транскрибацию Whisper. Best-effort: ошибка здесь не важна."""
+        под следующую транскрибацию Whisper. Best-effort: ошибка здесь не важна.
+
+        Короткий таймаут (5с, как в health()), а не self.idle_timeout (по умолчанию
+        180с): unload() дёргается и из idle_tick воркера — на зависшей Ollama поток
+        воркера иначе блокировался бы на все три минуты вместо мгновенного отказа."""
         try:
-            self._chat([], keep_alive=0)
+            self._chat([], keep_alive=0, timeout=timeout)
         except Exception:
             pass
 

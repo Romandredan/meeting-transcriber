@@ -131,6 +131,19 @@ def test_generate_reports_dead_daemon(monkeypatch):
     assert "запустите Ollama" in str(e.value)
 
 
+def test_generate_reports_server_error_with_code_not_daemon_advice(monkeypatch):
+    """HTTPError — подкласс URLError: не-404 (например, 500 при неудачной загрузке
+    модели) не должен получать заведомо ложный совет «запустите Ollama»."""
+    def boom(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 500, "internal error", {}, None)
+
+    monkeypatch.setattr(llm, "_open", boom)
+    with pytest.raises(llm.LlmError) as e:
+        provider().generate("сис", "польз")
+    assert "500" in str(e.value)
+    assert "запустите Ollama" not in str(e.value)
+
+
 def test_generate_raises_on_error_field(monkeypatch):
     monkeypatch.setattr(llm, "_open", lambda req, timeout: ndjson(
         {"error": "model requires more system memory"}))
@@ -204,3 +217,20 @@ def test_unload_sends_keep_alive_zero(monkeypatch):
     provider().unload()
     assert seen["body"]["keep_alive"] == 0
     assert seen["body"]["messages"] == []
+
+
+def test_unload_uses_short_timeout_not_llm_idle_timeout(monkeypatch):
+    """На зависшей Ollama unload() не должен блокировать поток воркера на весь
+    LLM_IDLE_TIMEOUT (180с по умолчанию) — короткий таймаут, как в health()."""
+    seen = {}
+
+    def fake_open(req, timeout):
+        seen["timeout"] = timeout
+        return ndjson({"message": {"content": ""}, "done": True})
+
+    monkeypatch.setattr(llm, "_open", fake_open)
+    p = llm.OllamaProvider("http://localhost:11434", "qwen3:14b",
+                           num_ctx=4096, temperature=0.2, idle_timeout=180)
+    p.unload()
+    assert seen["timeout"] == 5
+    assert seen["timeout"] != p.idle_timeout
