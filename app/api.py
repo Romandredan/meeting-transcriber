@@ -5,17 +5,19 @@ import json
 import os
 import queue
 import re
+import shutil
 import sqlite3
 import zipfile
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import analyses, config, job_queue, llm, templates_store
 from app.models import Settings
+from app.watcher import is_media
 
 WEB_DIR = config.BASE_DIR / "web"
 
@@ -69,6 +71,53 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         jid = job_queue.enqueue(conn, path, json.dumps(body.settings))
         return {"id": jid}
 
+    @app.post("/api/jobs/upload")
+    async def upload_job(request: Request, filename: str):
+        """Приём файла из веб-интерфейса (drag&drop / «Выбрать на диске»).
+
+        Браузер по соображениям безопасности не отдаёт полный путь к файлу,
+        поэтому содержимое передаётся телом запроса. Сохраняем в inbox — оттуда
+        файл живёт обычным циклом (после расшифровки уедет в processed).
+        Имя идёт query-параметром: так тело читается потоком и не нужен
+        python-multipart (новые зависимости не добавляем).
+        """
+        # Только имя файла: из браузера может прийти «путь» вида C:\fakepath\x.mp4.
+        name = re.split(r"[\\/]", filename)[-1].strip()
+        if not name:
+            raise HTTPException(400, "Не передано имя файла")
+        if not is_media(name):
+            raise HTTPException(400, f"«{name}» — не медиафайл, такое расшифровать нельзя")
+        inbox = config.INBOX_DIR
+        inbox.mkdir(parents=True, exist_ok=True)
+        # Пишем под немедиа-суффиксом и переименовываем в конце: watcher реагирует
+        # только на медиа-расширения, и недописанный файл мимо него пройдёт.
+        tmp_target = inbox / (name + ".uploading")
+        size = 0
+        with open(tmp_target, "wb") as fh:
+            async for chunk in request.stream():
+                fh.write(chunk)
+                size += len(chunk)
+        if size == 0:
+            tmp_target.unlink(missing_ok=True)
+            raise HTTPException(400, f"«{name}»: получен пустой файл")
+        # Не перезаписываем лежащее в inbox — суффикс, как в move_to_processed.
+        target = inbox / name
+        if target.exists():
+            base, ext = os.path.splitext(name)
+            i = 1
+            while (inbox / f"{base}.{i}{ext}").exists():
+                i += 1
+            target = inbox / f"{base}.{i}{ext}"
+        os.replace(tmp_target, target)
+        # Дедуп с watcher'ом: он увидит переименование и проверит has_active, но
+        # проверяем и сами — при INBOX_QUIET_SECONDS=0 гонка реальна.
+        if not job_queue.has_active(conn, str(target)):
+            jid = job_queue.enqueue(conn, str(target), "{}")
+        else:
+            row = conn.execute("SELECT id FROM jobs WHERE source_path=?", (str(target),)).fetchone()
+            jid = int(row["id"]) if row else None
+        return {"id": jid}
+
     @app.get("/api/jobs")
     def list_jobs():
         return [dict(r) for r in job_queue.list_jobs(conn)]
@@ -82,8 +131,12 @@ def create_app(conn, broker, settings_state) -> FastAPI:
 
     @app.get("/api/settings")
     def get_settings():
+        # diarize_available — есть ли HF_TOKEN: без него диаризация молча
+        # пропускается, и фронт должен предупредить об этом явно, а не дарить
+        # пользователю транскрипт «без разделения» без объяснений.
         return {"settings": settings_state.get_global().to_dict(),
-                "formats": settings_state.get_formats()}
+                "formats": settings_state.get_formats(),
+                "diarize_available": bool(config.HF_TOKEN)}
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -139,6 +192,114 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         if not config.ANALYZE_ENABLED:
             return {"enabled": False}
         return {"enabled": True, **llm.make_provider().health()}
+
+    # ── управление очередью ──────────────────────────────────────────────────
+
+    @app.post("/api/jobs/{job_id}/cancel")
+    def cancel_job(job_id: int):
+        """Снимает встречу с очереди или просит воркер остановиться.
+
+        Работа в очереди отменяется мгновенно (её ещё никто не взял). Работа в
+        процессе — кооперативно: воркер увидит флаг на ближайшей стадии, поэтому
+        UI показывает «отменяем», а не «отменено»."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        if row["status"] == "queued":
+            job_queue.update(conn, job_id, status="cancelled", stage="", progress=0.0, error="")
+            broker.publish(job_id, "", 0.0, "cancelled")
+            return {"ok": True, "status": "cancelled"}
+        if row["status"] == "processing":
+            job_queue.request_cancel(job_id)
+            return {"ok": True, "status": "cancelling"}
+        raise HTTPException(400, "отменять можно только встречу в очереди или в работе")
+
+    @app.post("/api/jobs/{job_id}/requeue")
+    def requeue_job(job_id: int):
+        """Повтор после ошибки или возврат отменённой встречи в очередь."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        if row["status"] == "processing":
+            raise HTTPException(400, "встреча уже расшифровывается")
+        if not os.path.isfile(row["source_path"]):
+            raise HTTPException(
+                400, f"исходный файл больше не доступен: {row['source_path']} — "
+                     f"он мог быть перемещён в processed/ после успешной расшифровки")
+        job_queue.clear_cancel(job_id)
+        job_queue.update(conn, job_id, status="queued", stage="", progress=0.0, error="")
+        broker.publish(job_id, "", 0.0, "queued")
+        return {"ok": True}
+
+    @app.delete("/api/jobs/{job_id}")
+    def delete_job(job_id: int, purge: bool = False):
+        """Убирает встречу из списка. purge=true — вместе с папкой результатов."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        if row["status"] == "processing":
+            raise HTTPException(400, "сначала отмените расшифровку")
+        if purge and row["output_dir"] and os.path.isdir(row["output_dir"]):
+            shutil.rmtree(row["output_dir"], ignore_errors=True)
+        job_queue.delete(conn, job_id)
+        return {"ok": True}
+
+    # ── данные для раскрытой карточки ────────────────────────────────────────
+
+    @app.get("/api/jobs/{job_id}/transcript")
+    def job_transcript(job_id: int, meta: bool = False, limit: int = 3000):
+        """Расшифровка для панели «Транскрипция» — читается с диска, из того же
+        {basename}.json, что потом уходит в анализ.
+
+        meta=true — только сводка (язык, длительность, модель, спикеры, число
+        реплик): список /api/jobs её не несёт, а строке очереди она нужна."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        if not row["output_dir"]:
+            raise HTTPException(404, "расшифровка недоступна")
+        base = os.path.splitext(row["filename"])[0]
+        path = os.path.join(row["output_dir"], f"{base}.json")
+        if not os.path.isfile(path):
+            raise HTTPException(404, "нет файла транскрипта — формат JSON был выключен")
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        segments = data.get("segments", [])
+        speakers = sorted({s.get("speaker") for s in segments if s.get("speaker")})
+        out = {
+            "language": data.get("language", ""),
+            "duration": data.get("duration", 0.0),
+            "model": data.get("model", ""),
+            "diarized": bool(data.get("diarized", False)),
+            "speakers": speakers,
+            "count": len(segments),
+        }
+        if meta:
+            return out
+        # Слова не отдаём: панели нужны только реплики, а words раздувают ответ
+        # часовой встречи в десятки мегабайт.
+        out["segments"] = [
+            {"start": s.get("start", 0.0), "end": s.get("end", 0.0),
+             "text": s.get("text", ""), "speaker": s.get("speaker")}
+            for s in segments[:limit]
+        ]
+        out["truncated"] = len(segments) > limit
+        return out
+
+    @app.get("/api/jobs/{job_id}/files")
+    def job_files(job_id: int):
+        """Какие форматы реально лежат на диске — чтобы UI не рисовал ссылки на
+        файлы, которых нет (форматы можно выключать в настройках)."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        out_dir = row["output_dir"]
+        if not out_dir or not os.path.isdir(out_dir):
+            return {"formats": []}
+        base = os.path.splitext(row["filename"])[0]
+        formats = [fmt for fmt in ("txt", "srt", "vtt", "json", "md", "docx")
+                   if os.path.isfile(os.path.join(out_dir, f"{base}.{fmt}"))]
+        return {"formats": formats}
 
     # Флаг читаем в момент вызова create_app: при ANALYZE_ENABLED=false роутов
     # анализа не существует вовсе, и установленная Ollama не требуется.

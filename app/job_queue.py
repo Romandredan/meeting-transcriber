@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 
 
 def enqueue(conn: sqlite3.Connection, source_path: str, settings_json: str) -> int:
@@ -19,10 +20,11 @@ def has_active(conn: sqlite3.Connection, source_path: str) -> bool:
 
     Используется watcher'ом, чтобы не ставить повторно файл, который ещё лежит в inbox
     (например, при MOVE_PROCESSED=false или при стартовом скане). 'error' не считаем —
-    такой файл можно поставить заново."""
+    такой файл можно поставить заново. 'cancelled' считаем: иначе отменённый файл из
+    inbox watcher поставил бы в очередь заново, и отмена не была бы окончательной."""
     row = conn.execute(
         "SELECT 1 FROM jobs WHERE source_path=? AND status IN "
-        "('queued','processing','done') LIMIT 1",
+        "('queued','processing','done','cancelled') LIMIT 1",
         (source_path,),
     ).fetchone()
     return row is not None
@@ -73,3 +75,40 @@ def recover_stuck(conn: sqlite3.Connection) -> int:
     )
     conn.commit()
     return cur.rowcount
+
+
+class JobCancelled(Exception):
+    """Пользователь отменил расшифровку — не ошибка обработки."""
+
+
+# Отмена «на лету»: очередь работ живёт в БД, а флаг отмены — в памяти процесса.
+# Так и должно быть: воркер и API — один процесс, а после перезапуска сервера
+# отменять уже нечего (recover_stuck вернёт зависшее 'processing' в очередь).
+_cancel_requests: set[int] = set()
+_cancel_lock = threading.Lock()
+
+
+def request_cancel(job_id: int) -> None:
+    with _cancel_lock:
+        _cancel_requests.add(int(job_id))
+
+
+def cancel_requested(job_id: int) -> bool:
+    with _cancel_lock:
+        return int(job_id) in _cancel_requests
+
+
+def clear_cancel(job_id: int) -> None:
+    with _cancel_lock:
+        _cancel_requests.discard(int(job_id))
+
+
+def delete(conn: sqlite3.Connection, job_id: int) -> None:
+    """Убирает встречу из списка вместе с её анализами.
+
+    Файлы в output/ НЕ трогаем: результат мог быть уже разослан, а строка в
+    списке — только представление. Чистку диска делает отдельный вызов из API
+    с purge=true."""
+    conn.execute("DELETE FROM analyses WHERE job_id=?", (job_id,))
+    conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    conn.commit()

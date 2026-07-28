@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app import config
 from app.models import Settings
 
 DEFAULT_FORMATS = ["txt", "srt", "vtt", "json", "md", "docx"]
@@ -17,7 +18,9 @@ class SettingsStore:
 
     def __init__(self, conn) -> None:
         self._conn = conn
-        self._settings = Settings()
+        # Модель по умолчанию — из .env (WHISPER_MODEL): у клиента со слабой
+        # машиной дефолт меняется без правки кода.
+        self._settings = Settings(model=config.WHISPER_MODEL)
         self._formats = list(DEFAULT_FORMATS)
         self._load()
 

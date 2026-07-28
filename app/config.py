@@ -48,6 +48,11 @@ HF_TOKEN = os.environ.get("HF_TOKEN") or None
 APP_HOST = os.environ.get("APP_HOST", "127.0.0.1")
 APP_PORT = int(os.environ.get("APP_PORT", "8473"))  # нечастый дефолт; меняется через .env
 
+# Модель Whisper по умолчанию (её же предзагружает установщик, см.
+# scripts/warmup_models.py). Переопределяется в .env — например, "large-v3"
+# для максимального качества или "small" для слабой машины.
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+
 # Переносить ли исходник из inbox в processed после успешной обработки.
 # Выключи (MOVE_PROCESSED=false), если отслеживаешь свою «живую» папку записей
 # и не хочешь, чтобы оригиналы перемещались.
@@ -56,8 +61,8 @@ MOVE_PROCESSED = _flag("MOVE_PROCESSED", True)
 # Watcher: файл из inbox ставится в очередь только когда размер И mtime
 # не менялись INBOX_QUIET_SECONDS подряд (защита от захвата ещё пишущегося/
 # стримящегося файла). Пока файл растёт — ждём без раннего отказа.
-INBOX_QUIET_SECONDS = float(os.environ.get("INBOX_QUIET_SECONDS", "15"))
-INBOX_POLL_SECONDS = float(os.environ.get("INBOX_POLL_SECONDS", "2"))
+INBOX_QUIET_SECONDS = float(os.environ.get("INBOX_QUIET_SECONDS", "90"))
+INBOX_POLL_SECONDS = float(os.environ.get("INBOX_POLL_SECONDS", "30"))
 
 # Склейка реплик одного спикера (TXT/MD/DOCX): максимальная длина блока в секундах.
 # Длинный монолог режется на под-блоки по этому порогу. 0 — без ограничения.

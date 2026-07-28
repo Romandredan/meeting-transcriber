@@ -1,0 +1,35 @@
+name: Release
+
+# Релиз создаётся автоматически при пуше тега вида v1.2.3.
+# Архив — чистый снимок репозитория по тегу (git archive, без .git),
+# плюс стандартные Source code zip/tar.gz, которые GitHub прикладывает сам.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать zip-архив
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          NAME="meeting-transcriber-${TAG}"
+          git archive --format=zip --prefix="${NAME}/" -o "${NAME}.zip" HEAD
+          ls -lh "${NAME}.zip"
+
+      - name: Создать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "${TAG}" \
+            "meeting-transcriber-${TAG}.zip" \
+            --title "${TAG}" \
+            --generate-notes

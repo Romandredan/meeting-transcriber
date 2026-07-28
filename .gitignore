@@ -10,8 +10,13 @@ data.db-*
 models/
 logs/
 processed/
+tools/
 .pytest_cache/
 .superpowers/
+.remember/
 # Внутренние материалы разработки (брейншторм/план/спайк/идеи) — не публикуем
 docs/superpowers/
 docs/ideas/
+docs/plan-easy-install.md
+# Прежняя версия фронтенда, оставлена локально на всякий случай
+web/_old/

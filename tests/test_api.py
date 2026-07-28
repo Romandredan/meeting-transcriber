@@ -48,12 +48,67 @@ def test_create_job_strips_quotes_and_whitespace(tmp_path):
     assert r.status_code == 200
 
 
+def _upload(client, name, data=b"audio-bytes"):
+    return client.post("/api/jobs/upload", params={"filename": name}, content=data)
+
+
+def test_upload_saves_to_inbox_and_enqueues(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "INBOX_DIR", tmp_path / "inbox")
+    client, conn = make_client(tmp_path)
+    # Имя вида C:\fakepath\x.mp4 браузер может прислать как «путь» — берём только имя.
+    r = _upload(client, "C:\\fakepath\\встреча.mp4")
+    assert r.status_code == 200
+    saved = config.INBOX_DIR / "встреча.mp4"
+    assert saved.read_bytes() == b"audio-bytes"
+    row = conn.execute("SELECT * FROM jobs WHERE id=?", (r.json()["id"],)).fetchone()
+    assert row["source_path"] == str(saved)
+
+
+def test_upload_rejects_non_media(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "INBOX_DIR", tmp_path / "inbox")
+    client, _ = make_client(tmp_path)
+    r = _upload(client, "notes.txt")
+    assert r.status_code == 400
+    assert not list(config.INBOX_DIR.glob("*.uploading"))
+
+
+def test_upload_rejects_empty_body(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "INBOX_DIR", tmp_path / "inbox")
+    client, _ = make_client(tmp_path)
+    r = _upload(client, "a.mp4", data=b"")
+    assert r.status_code == 400
+    # Временный файл подчищен, в очередь ничего не встало.
+    assert not list(config.INBOX_DIR.iterdir())
+    assert client.get("/api/jobs").json() == []
+
+
+def test_upload_does_not_overwrite_existing(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "INBOX_DIR", tmp_path / "inbox")
+    config.INBOX_DIR.mkdir()
+    (config.INBOX_DIR / "a.mp4").write_bytes(b"old")
+    client, _ = make_client(tmp_path)
+    r = _upload(client, "a.mp4", data=b"new")
+    assert r.status_code == 200
+    assert (config.INBOX_DIR / "a.mp4").read_bytes() == b"old"
+    assert (config.INBOX_DIR / "a.1.mp4").read_bytes() == b"new"
+
+
 def test_get_and_put_settings(tmp_path):
     client, _ = make_client(tmp_path)
     client.put("/api/settings", json={"settings": {"model": "large-v3"}, "formats": ["txt"]})
     got = client.get("/api/settings").json()
     assert got["settings"]["model"] == "large-v3"
     assert got["formats"] == ["txt"]
+
+
+def test_settings_report_diarize_availability(tmp_path, monkeypatch):
+    # Без HF_TOKEN диаризация молча пропускается — фронт обязан знать об этом
+    # заранее и предупредить, а не выдать транскрипт «без разделения».
+    monkeypatch.setattr(config, "HF_TOKEN", None)
+    client, _ = make_client(tmp_path)
+    assert client.get("/api/settings").json()["diarize_available"] is False
+    monkeypatch.setattr(config, "HF_TOKEN", "hf_xxx")
+    assert client.get("/api/settings").json()["diarize_available"] is True
 
 
 @pytest.fixture(autouse=True)

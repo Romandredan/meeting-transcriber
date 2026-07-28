@@ -4,66 +4,149 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Транскрибатор встреч</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=7">
 </head>
 <body>
-  <header><h1>Транскрибатор встреч</h1></header>
-  <main>
-    <section id="settings">
-      <h2>Настройки</h2>
-      <label>Модель
-        <select id="model">
-          <option value="large-v3-turbo">large-v3-turbo</option>
-          <option value="large-v3">large-v3</option>
-        </select>
-      </label>
-      <label>Язык <input id="language" placeholder="авто (пусто) / ru"></label>
-      <label><input type="checkbox" id="diarize" checked> Диаризация</label>
-      <label>Число спикеров <input id="num_speakers" type="number" min="1" placeholder="авто"></label>
-      <label>Словарь (≤ ~224 токена; смещает распознавание, не гарантирует)
-        <textarea id="vocabulary" rows="3" placeholder="АккордПост, ОФД, ..."></textarea>
-      </label>
-      <fieldset><legend>Форматы вывода</legend>
-        <label><input type="checkbox" class="fmt" value="txt" checked> TXT</label>
-        <label><input type="checkbox" class="fmt" value="srt" checked> SRT</label>
-        <label><input type="checkbox" class="fmt" value="vtt" checked> VTT</label>
-        <label><input type="checkbox" class="fmt" value="json" checked> JSON</label>
-        <label><input type="checkbox" class="fmt" value="md" checked> MD</label>
-        <label><input type="checkbox" class="fmt" value="docx" checked> DOCX</label>
-      </fieldset>
-      <button id="save-settings">Сохранить настройки</button>
-    </section>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">ТРАНСКРИБАТОР ВСТРЕЧ</div>
+    <div class="nav">
+      <button class="nav-item on" id="nav-home" type="button">Встречи</button>
+      <button class="nav-item" id="nav-settings" type="button">Словарь и шаблоны</button>
+    </div>
+    <div class="topbar-right">
+      <span class="tag tag-neutral" id="llm-tag">Анализ: проверяем…</span>
+      <span class="topbar-status" id="queue-status">Загрузка…</span>
+    </div>
+  </div>
+  <div class="offline">Нет связи с сервером транскрибатора. Проверьте, что <code>run.ps1</code> запущен, — страница сама подключится снова.</div>
 
-    <section id="add">
-      <h2>Добавить файлы</h2>
-      <div id="drop">Перетащите файлы (браузер передаёт только имя — впишите полный путь ниже) или вставьте полные пути</div>
-      <textarea id="paths" rows="3" placeholder="C:\videos\meeting1.mp4 (по одному пути на строку)"></textarea>
-      <button id="add-paths">В очередь</button>
-      <p class="hint">Надёжнее всего — положить файлы в папку <code>inbox/</code> или вставить полные пути вручную.</p>
-    </section>
+  <!-- ══ экран «Встречи» ══════════════════════════════════════════════════ -->
+  <main id="screen-home">
+    <div class="top-grid">
+      <div class="col">
+        <div class="zone-head">
+          <span class="zone-num">01</span>
+          <span class="zone-title">Добавить записи</span>
+        </div>
+        <div class="blueprint panel">
+          <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+          <div class="dz" id="dz">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5-5 5 5"></path><path d="M12 5v12"></path></svg>
+            <div class="dz-title">Перетащите файл сюда</div>
+            <span class="btn btn-secondary" id="pick-file">Выбрать на диске</span>
+            <input type="file" id="file-input" accept="audio/*,video/*" multiple hidden>
+          </div>
+          <div class="row">
+            <input class="input" id="path-input" style="flex:1;min-height:42px" placeholder="…или полный путь: C:\videos\meeting.mp4">
+            <button class="btn btn-primary" id="add-path" style="min-height:42px" type="button">В очередь</button>
+          </div>
+          <div class="hint" id="add-hint">Перетащите файлы в область выше или выберите на диске — они загрузятся в <code>inbox/</code> и встанут в очередь сами. Файлы, положенные в <code>inbox/</code> вручную, подхватываются автоматически.</div>
+        </div>
+      </div>
 
-    <section id="templates" hidden>
-      <h2>Шаблоны анализа</h2>
-      <p class="hint" id="llm-status"></p>
-      <div id="templates-list"></div>
-      <details>
-        <summary>Добавить или изменить шаблон</summary>
-        <input type="hidden" id="tpl-id">
-        <label>Метка (латиницей, уникальная) <input id="tpl-label" placeholder="protocol"></label>
-        <label>Название <input id="tpl-name" placeholder="Протокол встречи"></label>
-        <label>Описание <input id="tpl-desc" placeholder="для будущей авто-классификации"></label>
-        <label>Промпт <textarea id="tpl-body" rows="10" placeholder="Составь протокол встречи по расшифровке ниже..."></textarea></label>
-        <label><input type="checkbox" id="tpl-enabled" checked> Включён</label>
-        <button id="tpl-save">Сохранить шаблон</button>
-        <button id="tpl-reset">Очистить форму</button>
-      </details>
-    </section>
+      <div class="col">
+        <div class="zone-head">
+          <span class="zone-num">02</span>
+          <span class="zone-title">Как расшифровывать</span>
+          <a href="#settings" class="hint" id="to-settings-link" style="margin-left:auto;color:var(--color-accent);text-decoration:none">Словарь и шаблоны →</a>
+        </div>
+        <div class="blueprint panel">
+          <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+          <div class="field">
+            <label>Модель</label>
+            <div class="seg" style="width:100%" id="model-seg">
+              <span class="seg-opt" data-model="large-v3-turbo" style="flex:1;justify-content:center;padding:10px 14px">large-v3-turbo · быстрее</span>
+              <span class="seg-opt" data-model="large-v3" style="flex:1;justify-content:center;padding:10px 14px">large-v3 · точнее</span>
+            </div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>Язык</label>
+              <input class="input" id="language" style="min-height:40px" placeholder="определить сам">
+            </div>
+            <div class="field"><label>Спикеры</label>
+              <input class="input" id="speakers" style="min-height:40px" placeholder="разделять, число авто">
+            </div>
+          </div>
+          <div class="hint" id="spk-hint" style="margin-top:7px;color:var(--color-danger-text,#c66)"></div>
+          <div class="field"><label>Форматы вывода</label>
+            <div class="fmts" id="fmts"></div>
+            <div class="hint" id="fmt-hint" style="margin-top:7px"></div>
+          </div>
+          <div class="panel-foot">
+            <span class="hint" id="settings-summary"></span>
+            <button class="btn btn-ghost" id="to-settings" style="margin-left:auto" type="button">Изменить</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-    <section id="queue">
-      <h2>Очередь</h2>
-      <div id="jobs"></div>
-    </section>
+    <div class="queue-zone">
+      <div class="queue-head">
+        <span class="zone-num">03</span>
+        <span class="zone-title">Очередь и результаты</span>
+        <div class="queue-rule"></div>
+        <div class="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="color-mix(in srgb,var(--color-text) 50%,transparent)" stroke-width="1.5"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <input class="input" id="query" placeholder="Поиск по названию встречи">
+        </div>
+        <div class="seg" id="filters">
+          <span class="seg-opt on" data-filter="all">Все</span>
+          <span class="seg-opt" data-filter="work">В работе</span>
+          <span class="seg-opt" data-filter="done">Готово</span>
+          <span class="seg-opt" data-filter="error">Ошибки</span>
+        </div>
+      </div>
+      <div class="blueprint" id="queue-box">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <div id="upload-list"></div>
+        <div id="queue-list"></div>
+      </div>
+    </div>
   </main>
-  <script src="/static/app.js"></script>
+
+  <!-- ══ экран «Словарь и шаблоны» ════════════════════════════════════════ -->
+  <main id="screen-settings" hidden>
+    <div class="set-row">
+      <div class="set-side">
+        <div class="set-num">01</div>
+        <div class="set-title">Словарь<br>терминов</div>
+      </div>
+      <div class="set-body" style="flex-direction:row;gap:24px;align-items:flex-start">
+        <div class="field" style="flex:1;max-width:640px">
+          <label>Имена, названия и термины, которые распознаватель путает</label>
+          <textarea class="input" id="vocab" style="min-height:96px" placeholder="АккордПост, ОФД, обесценение, …"></textarea>
+        </div>
+        <div class="hint" style="width:300px;padding-top:22px">
+          Не более ~224 токенов. Словарь смещает распознавание в нужную сторону, но не гарантирует написания. Применяется к новым расшифровкам и к анализам.<br>
+          Сейчас: <b id="vocab-stat">0 слов</b>
+        </div>
+      </div>
+    </div>
+
+    <div class="set-row">
+      <div class="set-side">
+        <div class="set-num">02</div>
+        <div class="set-title">Шаблоны<br>анализа</div>
+        <div class="hint">Локальная LLM, текст никуда не уходит</div>
+      </div>
+      <div class="set-body">
+        <div class="row">
+          <span class="tag tag-neutral" id="llm-tag-2">Проверяем Ollama…</span>
+          <span class="hint" id="llm-note"></span>
+          <button class="btn btn-secondary" id="tpl-new" style="margin-left:auto" type="button">Новый шаблон</button>
+        </div>
+        <div id="templates-list"></div>
+        <div id="tpl-form-host"></div>
+        <div class="row" style="margin-top:6px">
+          <button class="btn btn-secondary" id="back-home" type="button">← К встречам</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

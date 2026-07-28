@@ -49,6 +49,40 @@ def move_to_processed(source_path: str, inbox_dir: str | None,
         return None
 
 
+# Типовые сбои железа/сети → понятный совет пользователю. Исходный текст ошибки
+# всегда сохраняется в скобках — его пришлют в поддержку, перевод не должен
+# съедать диагностику.
+_ERROR_HINTS = [
+    ("out of memory",
+     "Не хватило видеопамяти. Закройте игры, браузер и другие программы, "
+     "нагружающие видеокарту, и нажмите «Повторить». Если не помогло — выберите "
+     "в настройках модель меньше (например, large-v3-turbo вместо large-v3)."),
+    ("cudnn",
+     "Сбой библиотеки cuDNN (часть драйвера NVIDIA). Обновите драйвер "
+     "видеокарты с сайта nvidia.ru и перезагрузите компьютер."),
+    ("cuda driver",
+     "Драйвер NVIDIA не отвечает. Обновите драйвер и перезагрузите компьютер."),
+    ("connection", "Не удалось скачать модель распознавания. Проверьте "
+     "интернет-соединение и нажмите «Повторить» — скачивание продолжится."),
+    ("timed out", "Сеть отвечает слишком медленно при скачивании модели. "
+     "Проверьте интернет и нажмите «Повторить»."),
+]
+
+
+def describe_error(e: Exception) -> str:
+    """Текст ошибки для строки в интерфейсе: совет на русском + оригинал.
+
+    Сырой вид «RuntimeError: CUDA out of memory» пользователю ни о чём не
+    скажет, а поддержке нужен именно он — поэтому подсказка ДОБАВЛЯЕТСЯ
+    к оригиналу, а не заменяет его."""
+    raw = f"{type(e).__name__}: {e}"
+    low = raw.lower()
+    for needle, hint in _ERROR_HINTS:
+        if needle in low:
+            return f"{hint} (подробности: {raw})"
+    return raw
+
+
 def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
                 formats: list[str], tmp_dir: str, output_dir: str,
                 inbox_dir: str | None = None, processed_dir: str | None = None) -> None:
@@ -59,6 +93,13 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
     job_out = os.path.join(output_dir, str(job_id))
 
     def report(stage: str, progress: float) -> None:
+        # Отмену проверяем здесь: report — единственная точка, которую движок
+        # дёргает по ходу расшифровки. Отмена срабатывает на ближайшей стадии
+        # (audio → transcribe → diarize → write), то есть не мгновенно: рвать
+        # инференс посреди файла нечем, а ждать конца стадии честнее, чем
+        # показывать «отменено» и продолжать жечь GPU.
+        if job_queue.cancel_requested(job_id):
+            raise job_queue.JobCancelled()
         job_queue.update(conn, job_id, stage=stage, progress=progress)
         broker.publish(job_id, stage, progress, "processing")
 
@@ -78,10 +119,14 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
         broker.publish(job_id, "write", 1.0, "done")
         # Успех: уносим исходник из inbox в processed, чтобы не транскрибировать повторно.
         move_to_processed(job_row["source_path"], inbox_dir, processed_dir)
+    except job_queue.JobCancelled:
+        job_queue.update(conn, job_id, status="cancelled", stage="", progress=0.0, error="")
+        broker.publish(job_id, "", 0.0, "cancelled")
     except Exception as e:
-        job_queue.update(conn, job_id, status="error", error=f"{type(e).__name__}: {e}")
+        job_queue.update(conn, job_id, status="error", error=describe_error(e))
         broker.publish(job_id, "", 0.0, "error")
     finally:
+        job_queue.clear_cancel(job_id)   # флаг не должен переехать на повтор
         try:
             if os.path.exists(wav):
                 os.remove(wav)

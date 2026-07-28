@@ -302,3 +302,20 @@ def test_idle_tick_without_provider_unloads_engine_only(tmp_path, monkeypatch):
     w = _make_worker(tmp_path, engine, provider=None)
     assert w.idle_tick(w._last_active + 300) is True
     assert engine.unloaded == 1
+
+
+def test_describe_error_adds_russian_hint_for_cuda_oom():
+    text = worker.describe_error(RuntimeError("CUDA out of memory. Tried to allocate 2 GiB"))
+    assert "видеопамяти" in text               # совет на русском
+    assert "CUDA out of memory" in text        # оригинал сохранён для поддержки
+
+
+def test_describe_error_adds_hint_for_cudnn():
+    text = worker.describe_error(RuntimeError("cuDNN error: CUDNN_STATUS_INTERNAL_ERROR"))
+    assert "драйвер" in text.lower()
+    assert "CUDNN_STATUS_INTERNAL_ERROR" in text
+
+
+def test_describe_error_passes_unknown_errors_through():
+    text = worker.describe_error(ValueError("что-то необычное"))
+    assert text == "ValueError: что-то необычное"

@@ -13,7 +13,10 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+    -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+# ExecutionTimeLimit=PT0S — «без ограничения»: autostart.ps1 — это супервизор,
+# который работает всю сессию и перезапускает сервер при падении. Ограничение
+# по времени (было 5 минут) убивало бы его вместе с сервером.
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings `
