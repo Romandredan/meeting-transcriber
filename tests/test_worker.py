@@ -272,7 +272,9 @@ def test_idle_tick_unloads_engine_and_provider_after_threshold(tmp_path, monkeyp
     monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
     engine, provider = FakeEngine(), FakeProvider()
     w = _make_worker(tmp_path, engine, provider)
-    assert w.idle_tick(w._last_active + 300) is True
+    # Не ровно +300: (a + 300) - a во float может дать 299.99999999999994
+    # (≈4% значений monotonic) — граничная проверка флаковала бы на CI.
+    assert w.idle_tick(w._last_active + 301) is True
     assert engine.unloaded == 1
     assert provider.unloaded == 1
 
@@ -281,7 +283,7 @@ def test_idle_tick_does_not_unload_twice_in_same_idle_period(tmp_path, monkeypat
     monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
     engine, provider = FakeEngine(), FakeProvider()
     w = _make_worker(tmp_path, engine, provider)
-    assert w.idle_tick(w._last_active + 300) is True
+    assert w.idle_tick(w._last_active + 301) is True
     assert w.idle_tick(w._last_active + 400) is False
     assert engine.unloaded == 1
     assert provider.unloaded == 1
@@ -300,7 +302,7 @@ def test_idle_tick_without_provider_unloads_engine_only(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "IDLE_UNLOAD_SECONDS", 300)
     engine = FakeEngine()
     w = _make_worker(tmp_path, engine, provider=None)
-    assert w.idle_tick(w._last_active + 300) is True
+    assert w.idle_tick(w._last_active + 301) is True
     assert engine.unloaded == 1
 
 
