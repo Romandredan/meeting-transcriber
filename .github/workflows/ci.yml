@@ -1,0 +1,32 @@
+name: CI
+
+# Тесты: push в main, pull request и как гейт перед релизом (workflow_call
+# дёргает release.yml). ML-зависимости не ставим: все импорты torch/faster-whisper/
+# pyannote в app/ ленивые, тестам хватает requirements-base.txt.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false  # пусть все версии Python доиграют — видно, где именно сломалось
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-base.txt
+
+      - name: Установить зависимости
+        run: pip install -r requirements-base.txt
+
+      - name: Прогнать тесты
+        run: python -m pytest -q

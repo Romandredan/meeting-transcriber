@@ -44,7 +44,7 @@
 .\install.ps1
 ```
 
-Линтер и форматтер **не настроены** — держись стиля окружающего кода. CI для тестов нет, проверка — локальный прогон pytest. Единственный workflow — [.github/workflows/release.yml](.github/workflows/release.yml): пуш тега `v*` → собирается zip снимка репозитория (`git archive`) и создаётся GitHub-релиз с авто-заметками.
+Линтер и форматтер **не настроены** — держись стиля окружающего кода. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml) — pytest на windows-latest, матрица Python 3.10–3.13, только `requirements-base.txt` (ML-импорты в `app/` ленивые, в CI не нужны). Триггеры: push в `main`, PR, и `workflow_call` из [.github/workflows/release.yml](.github/workflows/release.yml) — тесты там гейт релиза (`needs: test`): пуш тега `v*` → тесты → zip снимка репозитория (`git archive`) → GitHub-релиз с авто-заметками. Локальный прогон pytest перед сдачей обязателен в любом случае.
 
 ## Архитектура
 

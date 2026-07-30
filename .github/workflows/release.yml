@@ -12,7 +12,13 @@ permissions:
   contents: write
 
 jobs:
+  # Сначала тесты (тот же workflow, что на push/PR): тег, ломающий тесты,
+  # не должен уезжать в релиз.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
