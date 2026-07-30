@@ -678,30 +678,61 @@ function analysisState(jobId) {
   return { st, enabled, doneLabels, label, versions, ver, current: versions[ver] || null, active, failed, tpl };
 }
 
+// Инлайн-разметка: сначала экранируем HTML, потом подставляем свои теги —
+// чужой разметки в результате анализа не бывает, опасаться нечего.
+function mdInline(s) {
+  return esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+// Мини-рендерер markdown результата анализа: заголовки, списки, таблицы и
+// инлайн-разметка. Не полный CommonMark — только то, что реально выдаёт LLM.
 function mdHtml(md) {
   const out = [];
-  let para = [], rows = null;
-  const flushPara = () => { if (para.length) { out.push(`<p>${esc(para.join("\n"))}</p>`); para = []; } };
+  let para = [], rows = null, list = null;
+  const flushPara = () => { if (para.length) { out.push(`<p>${mdInline(para.join("\n"))}</p>`); para = []; } };
   const flushTable = () => {
     if (!rows) return;
     out.push(`<table class="table"><tbody>` + rows.map((r) =>
-      `<tr>` + r.map((c) => `<td>${esc(c)}</td>`).join("") + `</tr>`).join("") + `</tbody></table>`);
+      `<tr>` + r.map((c) => `<td>${mdInline(c)}</td>`).join("") + `</tr>`).join("") + `</tbody></table>`);
     rows = null;
   };
+  const flushList = () => { if (list) { out.push(`</${list}>`); list = null; } };
   String(md || "").split("\n").forEach((line) => {
     const t = line.trim();
-    if (/^#{1,4}\s/.test(t)) { flushPara(); flushTable(); out.push(`<h3>${esc(t.replace(/^#+\s*/, ""))}</h3>`); return; }
+    if (/^#{1,4}\s/.test(t)) { flushPara(); flushTable(); flushList(); out.push(`<h3>${mdInline(t.replace(/^#+\s*/, ""))}</h3>`); return; }
     if (t.startsWith("|")) {
-      flushPara();
+      flushPara(); flushList();
       const cells = t.split("|").slice(1, -1).map((c) => c.trim());
       if (cells.every((c) => /^:?-{2,}:?$/.test(c))) return;   // разделитель markdown-таблицы
       (rows = rows || []).push(cells);
       return;
     }
     flushTable();
+    // Маркированный пункт: "-" / "+" (LLM часто лепит "-" вплотную к "**"),
+    // звёздочку считаем маркером только с пробелом, чтобы не съесть "*курсив*".
+    let m = t.match(/^(?:[-+]\s*|\*\s+)(.*)$/);
+    if (m) {
+      flushPara();
+      if (list !== "ul") { flushList(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${mdInline(m[1])}</li>`);
+      return;
+    }
+    m = t.match(/^(\d+)[.)]\s+(.*)$/);
+    if (m) {
+      flushPara();
+      // Пункты часто разбиты подсписками — каждый раз новый <ol>,
+      // поэтому исходный номер сохраняем в start, иначе нумерация сбрасывается на 1.
+      if (list !== "ol") { flushList(); out.push(`<ol${m[1] !== "1" ? ` start="${m[1]}"` : ""}>`); list = "ol"; }
+      out.push(`<li>${mdInline(m[2])}</li>`);
+      return;
+    }
+    flushList();
     if (!t) flushPara(); else para.push(t);
   });
-  flushPara(); flushTable();
+  flushPara(); flushTable(); flushList();
   return out.join("");
 }
 
