@@ -65,7 +65,7 @@ def test_schema_creates_templates_and_analyses(tmp_path):
 
 
 def test_init_schema_is_idempotent(tmp_path):
-    """Повторный init_schema на существующей БД не падает (нет миграций)."""
+    """Повторный init_schema на существующей БД не падает и не трогает данные."""
     conn = make_conn(tmp_path)
     conn.execute("INSERT INTO templates (label, display_name, prompt_body) "
                  "VALUES ('protocol', 'Протокол', 'текст')")
