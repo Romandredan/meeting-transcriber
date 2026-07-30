@@ -26,7 +26,10 @@ jobs:
           cache-dependency-path: requirements-base.txt
 
       - name: Установить зависимости
-        run: pip install -r requirements-base.txt
+        # numpy — тестовая зависимость (tests/test_diarize_waveform.py); локально
+        # приезжает транзитивно с ML-стеком, в CI его нет. В requirements-base.txt
+        # не добавляем: установщику пользователя numpy не нужен отдельно.
+        run: pip install -r requirements-base.txt numpy
 
       - name: Прогнать тесты
         run: python -m pytest -q
