@@ -1,5 +1,6 @@
 # Meeting Transcriber
 
+[![CI](https://github.com/Romandredan/meeting-transcriber/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Romandredan/meeting-transcriber/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](https://www.python.org/)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
