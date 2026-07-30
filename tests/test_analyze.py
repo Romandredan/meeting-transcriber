@@ -40,6 +40,15 @@ def test_fold_prompt_guarantee_covers_names():
     assert "имена" in guarantee
 
 
+def test_map_and_fold_prompts_preserve_timestamps():
+    """MAP/FOLD обязаны проносить таймкоды [MM:SS] в заметках: шаблоны анализа
+    требуют «Источник: ~[MM:SS]» у пунктов, и без этой строки на длинных встречах
+    (map-reduce) модель на REDUCE получает заметки без времён и вынуждена
+    выдумывать таймкоды или массово писать «не назван»."""
+    assert "[MM:SS]" in analyze.MAP_PROMPT
+    assert "[MM:SS]" in analyze.FOLD_PROMPT
+
+
 def test_transcript_replicas_format_and_merge():
     """Формат '[MM:SS] Спикер N: текст'; подряд идущие реплики одного спикера склеены
     той же функцией, что и в TXT, — иначе анализ и протокол разъедутся."""

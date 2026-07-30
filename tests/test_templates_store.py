@@ -15,7 +15,7 @@ def test_seed_inserts_defaults_once(tmp_path):
     conn = make_conn(tmp_path)
     assert templates_store.seed_defaults(conn) == len(templates_store.DEFAULT_TEMPLATES)
     labels = {r["label"] for r in templates_store.list_templates(conn)}
-    assert {"protocol", "requirements", "summary"} <= labels
+    assert {"protocol", "requirements", "summary", "daily", "process"} <= labels
     # Второй вызов не трогает таблицу вообще.
     assert templates_store.seed_defaults(conn) == 0
 
@@ -68,3 +68,14 @@ def test_update_toggles_enabled_and_delete_removes(tmp_path):
 def test_default_prompts_are_non_empty():
     for t in templates_store.DEFAULT_TEMPLATES:
         assert t["label"] and t["display_name"] and len(t["prompt_body"]) > 100
+
+
+def test_default_prompts_document_real_replica_format():
+    """Дефолтные промпты обязаны описывать вход честно: реплики вида
+    [MM:SS] Спикер N: текст, как их реально отдаёт analyze.transcript_replicas.
+    Выдуманный формат (например, жирный **[HH:MM:SS]**) даёт модели противоречивое
+    описание входа — уже наступали."""
+    for t in templates_store.DEFAULT_TEMPLATES:
+        assert "[MM:SS]" in t["prompt_body"], t["label"]
+        assert "[HH:MM:SS]" not in t["prompt_body"], t["label"]
+        assert t["prompt_body"].rstrip().endswith("Расшифровка:"), t["label"]
