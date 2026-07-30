@@ -29,7 +29,12 @@ jobs:
         # numpy — тестовая зависимость (tests/test_diarize_waveform.py); локально
         # приезжает транзитивно с ML-стеком, в CI его нет. В requirements-base.txt
         # не добавляем: установщику пользователя numpy не нужен отдельно.
-        run: pip install -r requirements-base.txt numpy
+        # torch — только CPU-сборка и только ради того же теста: load_waveform()
+        # возвращает torch.Tensor для pyannote, замокать это не получится, не
+        # обесценив проверку. ~190 МБ один раз, дальше держится в pip-кэше.
+        run: |
+          pip install -r requirements-base.txt numpy
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Прогнать тесты
         run: python -m pytest -q
