@@ -3,12 +3,13 @@
 [![CI](https://github.com/Romandredan/meeting-transcriber/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Romandredan/meeting-transcriber/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Romandredan/meeting-transcriber.svg)](https://github.com/Romandredan/meeting-transcriber/releases)
 [![Last commit](https://img.shields.io/github/last-commit/Romandredan/meeting-transcriber/main.svg)](https://github.com/Romandredan/meeting-transcriber/commits/main)
+[![AGENTS.md](https://img.shields.io/badge/AGENTS.md-compatible-brightgreen.svg)](https://agents.md)
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](https://www.python.org/)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 ![GPU](https://img.shields.io/badge/GPU-NVIDIA%20CUDA%2012.8-76b900.svg)
 ![LLM](https://img.shields.io/badge/LLM-Ollama-000000.svg)
-[![AGENTS.md](https://img.shields.io/badge/AGENTS.md-compatible-brightgreen.svg)](https://agents.md)
 
 **Локальный транскрибатор записей встреч.** Видео/аудиофайл → диаризованная (с разметкой спикеров) транскрипция с таймкодами в TXT/SRT/VTT/JSON/MD/DOCX → опциональный анализ транскрипта локальной LLM (протокол, задачи, требования, резюме). Всё считается на вашей машине: ни аудио, ни текст никуда не отправляются.
 
