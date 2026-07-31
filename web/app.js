@@ -38,10 +38,12 @@ const S = {
   transcripts: new Map(),     // jobId → { segments, … }
   tq: new Map(),              // jobId → строка поиска по репликам
   an: new Map(),              // jobId → { list, pick, ver }
+  anEdit: new Set(),          // id анализов в режиме правки (не перерисовывать по опросу!)
   spk: new Map(),             // jobId → { open, rows: [{label, …, name, merged_into}] } — черновик панели имён
   gq: "",                     // строка глобального поиска по транскриптам и анализам
   gres: null,                 // результаты глобального поиска (null — не искали)
   pendingScroll: null,        // { job, start } — прокрутить к реплике после загрузки транскрипта
+  segEdit: null,              // { job, idx } — реплика в режиме правки (одна за раз)
   eta: new Map(),             // jobId → { t0, p0 } для оценки остатка
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
@@ -871,7 +873,8 @@ function renderSegs(jobId) {
   // пересборка innerHTML сбрасывает прокрутку списка наверх. Поэтому DOM
   // трогаем, только когда реально изменились данные или поисковый запрос —
   // тот же приём, что jobSig у строк очереди.
-  const sig = !t ? "load" : t.error ? "err:" + t.error : "ok:" + (t.segments || []).length + "|" + q;
+  const sig = !t ? "load" : t.error ? "err:" + t.error : "ok:" + (t.segments || []).length + "|" + q
+    + "|" + (S.segEdit && S.segEdit.job === jobId ? "edit" + S.segEdit.idx : "");
   if (box.dataset.rsig === sig) return;
   box.dataset.rsig = sig;
   if (!t) { box.innerHTML = `<div class="hint">Загружаем расшифровку…</div>`; cnt.textContent = ""; return; }
@@ -885,13 +888,59 @@ function renderSegs(jobId) {
     ? all.map((s, i) => [s, i]).filter(([s]) => (s.text || "").toLowerCase().includes(q) || (s.speaker || "").toLowerCase().includes(q))
     : all.map((s, i) => [s, i]);
   cnt.textContent = q ? "найдено " + shown.length + " из " + all.length : all.length + " реплик";
-  box.innerHTML = shown.slice(0, 1500).map(([s, i]) => `<div class="seg-line" data-idx="${i}">
+  box.innerHTML = shown.slice(0, 1500).map(([s, i]) => {
+    if (S.segEdit && S.segEdit.job === jobId && S.segEdit.idx === i) {
+      return `<div class="seg-line" data-idx="${i}">
+        <span class="seg-t">${tc(s.start)}</span>
+        <div style="min-width:0;display:flex;flex-direction:column;gap:6px;flex:1">
+          ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
+          <textarea class="input seg-edit-ta" id="segedit-${jobId}">${esc(s.text || "")}</textarea>
+          <div class="row" style="gap:6px;justify-content:flex-end">
+            <button class="btn btn-ghost" data-act="seg-cancel" data-id="${jobId}" type="button">Отмена</button>
+            <button class="btn btn-primary" data-act="seg-save" data-id="${jobId}" data-idx="${i}" type="button">Сохранить</button>
+          </div>
+        </div>
+      </div>`;
+    }
+    return `<div class="seg-line" data-idx="${i}">
       <span class="seg-t">${tc(s.start)}</span>
       <div style="min-width:0;display:flex;flex-direction:column;gap:2px">
         ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
-        <span class="seg-text">${highlight(s.text || "", q)}</span>
+        <span class="seg-text editable" data-id="${jobId}" data-idx="${i}" title="Нажмите, чтобы исправить текст реплики">${highlight(s.text || "", q)}</span>
       </div>
-    </div>`).join("") || `<div class="hint">Ничего не найдено в репликах.</div>`;
+    </div>`;
+  }).join("") || `<div class="hint">Ничего не найдено в репликах.</div>`;
+}
+
+/* ─────────────────────── правка реплики ─────────────────────── */
+
+function startSegEdit(jobId, idx) {
+  S.segEdit = { job: jobId, idx };
+  const box = $(`#segs-${jobId}`);
+  if (box) delete box.dataset.rsig;
+  renderSegs(jobId);
+  const ta = $(`#segedit-${jobId}`);
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+async function saveSegEdit(jobId, idx) {
+  const ta = $(`#segedit-${jobId}`);
+  const t = S.transcripts.get(jobId);
+  const seg = t && (t.segments || [])[idx];
+  if (!ta || !seg) return;
+  try {
+    await api(`/api/jobs/${jobId}/transcript`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start: seg.start, end: seg.end, text: ta.value }),
+    });
+  } catch (e) { toast("Не сохранено: " + e.message); return; }
+  // Правим локальный кэш — перерисовка без перезагрузки транскрипта.
+  seg.text = ta.value.trim();
+  S.segEdit = null;
+  const box = $(`#segs-${jobId}`);
+  if (box) delete box.dataset.rsig;
+  toast("Реплика исправлена — файлы пересобраны, анализы перегенерируйте при желании");
+  renderSegs(jobId);
 }
 
 /* ─────────────────────────── анализы ─────────────────────────── */
@@ -992,8 +1041,9 @@ function renderAnalysisCol(jobId) {
   // а полная замена innerHTML сбрасывала прокрутку длинного результата наверх.
   // Перерисовываем, только когда видимое состояние действительно изменилось
   // (шаблон, версия, прогресс идущего анализа, доступность Ollama, шаблоны).
-  const sig = JSON.stringify([
+   const sig = JSON.stringify([
     a.label, a.ver, a.current ? a.current.id : 0,
+    a.current && S.anEdit.has(a.current.id) ? "edit" : "view",
     a.active ? [a.active.id, a.active.stage || "", a.active.progress || 0] : 0,
     a.failed ? a.failed.id : 0,
     S.llm.ok, S.llm.error || "",
@@ -1020,7 +1070,15 @@ function renderAnalysisCol(jobId) {
     body = `<div class="run-bar"><div class="track"><i></i></div>
       <span class="hint" id="astage-${jobId}">Анализ идёт: ${esc(a.active.stage || "подготовка фрагментов")}</span></div>`;
   } else if (a.current) {
-    body = `<div class="md">${mdHtml(a.current.result_md)}</div>`;
+    if (S.anEdit.has(a.current.id)) {
+      body = `<textarea class="input md-edit" id="anedit-${a.current.id}">${esc(a.current.result_md)}</textarea>
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn btn-ghost" data-act="cancel-analysis-edit" data-id="${a.current.id}" data-job="${jobId}" type="button">Отмена</button>
+          <button class="btn btn-primary" data-act="save-analysis-edit" data-id="${a.current.id}" data-job="${jobId}" type="button">Сохранить</button>
+        </div>`;
+    } else {
+      body = `<div class="md">${mdHtml(a.current.result_md)}</div>`;
+    }
   } else if (a.failed) {
     body = `<div class="empty-note" style="border-color:color-mix(in srgb,var(--color-danger) 45%,transparent)">
       <div class="empty-title">Анализ не удался</div>
@@ -1035,6 +1093,8 @@ function renderAnalysisCol(jobId) {
       <span class="detail-title">Анализ</span>
       <span class="detail-meta">${esc(headMeta)}</span>
       <div class="detail-links">
+        ${a.current && a.current.edited ? `<span class="tag tag-accent" title="Эта версия изменена вручную">изменено вручную</span>` : ""}
+        ${a.current && !S.anEdit.has(a.current.id) ? `<a href="#" data-act="edit-analysis" data-id="${a.current.id}" data-job="${jobId}">Править</a>` : ""}
         ${a.current ? `<a href="#" data-act="copy" data-id="${jobId}">Скопировать</a>
           <a href="/api/analyses/${a.current.id}/download">md</a>
           <a href="#" data-act="del-analysis" data-id="${a.current.id}" data-job="${jobId}" style="color:var(--color-danger-text)">удалить</a>` : ""}
@@ -1053,10 +1113,33 @@ function renderAnalysisCol(jobId) {
 async function runAnalysis(jobId) {
   const a = analysisState(jobId);
   if (!a.label) { toast("Нет включённых шаблонов анализа"); return; }
+  if (a.current && a.current.edited
+      && !confirm("Перегенерация затрёт ручные правки этой версии. Продолжить?")) return;
   try { await api(`/api/jobs/${jobId}/analyses`, jsonBody({ label: a.label })); }
   catch (e) { toast("Анализ не поставлен: " + e.message); return; }
   toast("Анализ поставлен в очередь");
   loadAnalyses(jobId);
+}
+
+/* ─────────────────────── правка результата анализа ─────────────────────── */
+
+async function saveAnalysisEdit(analysisId, jobId) {
+  const ta = $(`#anedit-${analysisId}`);
+  if (!ta) return;
+  try {
+    await api(`/api/analyses/${analysisId}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result_md: ta.value }),
+    });
+  } catch (e) { toast("Не сохранено: " + e.message); return; }
+  // Обновляем локальный кэш версии и выходим из режима правки — колонка
+  // перерисуется (флаг редактирования входит в сигнатуру asig).
+  const st = S.an.get(jobId);
+  const row = st && st.list.find((x) => x.id === analysisId);
+  if (row) { row.result_md = ta.value; row.edited = 1; }
+  S.anEdit.delete(analysisId);
+  toast("Правки сохранены");
+  renderAnalysisCol(jobId);
 }
 
 /* ─────────────────────────── добавление файлов ─────────────────────────── */
@@ -1215,6 +1298,29 @@ document.addEventListener("click", async (ev) => {
         loadAnalyses(Number(a.dataset.job));
         return;
       }
+      case "edit-analysis":
+        ev.preventDefault(); ev.stopPropagation();
+        S.anEdit.add(id);
+        renderAnalysisCol(Number(a.dataset.job));
+        return;
+      case "cancel-analysis-edit":
+        ev.stopPropagation();
+        S.anEdit.delete(id);
+        renderAnalysisCol(Number(a.dataset.job));
+        return;
+      case "save-analysis-edit":
+        ev.stopPropagation();
+        saveAnalysisEdit(id, Number(a.dataset.job));
+        return;
+      case "seg-save":
+        ev.stopPropagation();
+        saveSegEdit(id, Number(a.dataset.idx));
+        return;
+      case "seg-cancel":
+        ev.stopPropagation();
+        S.segEdit = null;
+        renderSegs(id);
+        return;
       case "ver": {
         ev.stopPropagation();
         const st = S.an.get(id);
@@ -1305,6 +1411,13 @@ document.addEventListener("click", async (ev) => {
     // Карточка может быть за пределами экрана — подводим страницу к ней.
     const w = document.querySelector(`.job[data-id="${jid}"]`);
     if (w) w.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  // Клик по тексту реплики — инлайн-правка (таймкод оставлен под плеер).
+  const segText = ev.target.closest(".seg-text.editable");
+  if (segText) {
+    ev.stopPropagation();
+    startSegEdit(Number(segText.dataset.id), Number(segText.dataset.idx));
     return;
   }
   const row = ev.target.closest(".job-row");

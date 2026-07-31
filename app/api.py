@@ -58,6 +58,16 @@ class AnalysisIn(BaseModel):
     label: str
 
 
+class AnalysisEditIn(BaseModel):
+    result_md: str
+
+
+class ReplicaEditIn(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
 class SpeakerAliasIn(BaseModel):
     label: str
     name: str = ""
@@ -376,6 +386,32 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         speakers.rerender_outputs(result, row["output_dir"], base, aliases)
         return {"ok": True}
 
+    @app.patch("/api/jobs/{job_id}/transcript")
+    def patch_replica(job_id: int, body: ReplicaEditIn):
+        """Ручная правка реплики (план 6b): заменяет абзац [start, end]
+        отредактированным текстом в БД, переиндексирует FTS и перегенерирует
+        файлы (best-effort). Дисковый JSON осознанно отстаёт — истина в БД."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(400, "пустой текст реплики не сохраняем")
+        try:
+            ok = transcripts.update_segment_span(conn, job_id, body.start, body.end, text)
+        except IndexError as e:
+            raise HTTPException(400, f"реплика не найдена: {e} — "
+                                     f"обновите карточку встречи и попробуйте снова")
+        if not ok:
+            raise HTTPException(400, "транскрипт этой встречи не сохранён в базе — "
+                                     "редактирование недоступно")
+        result = transcripts.get(conn, job_id)
+        transcripts.index_replicas(conn, job_id, result)
+        base = os.path.splitext(row["filename"])[0]
+        speakers.rerender_outputs(result, row["output_dir"] or "", base,
+                                  speakers.get_aliases(conn, job_id))
+        return {"ok": True}
+
     @app.get("/api/search")
     def global_search(q: str = "", limit: int = 50, all: bool = False):
         """Полнотекстовый поиск по репликам всех встреч и результатам анализов
@@ -486,6 +522,22 @@ def create_app(conn, broker, settings_state) -> FastAPI:
                 headers={"Content-Disposition":
                          f'attachment; filename="analysis_{analysis_id}.md"; '
                          f"filename*=UTF-8''{quote(name)}"})
+
+        @app.put("/api/analyses/{analysis_id}")
+        def edit_analysis(analysis_id: int, body: AnalysisEditIn):
+            """Ручная правка результата анализа (план 6a). Помечаем версию
+            edited=1 и переиндексируем FTS, иначе поиск будет находить старый
+            текст. Перегенерация сбрасывает пометку (свежая LLM-версия)."""
+            row = analyses.get(conn, analysis_id)
+            if row is None or row["status"] != "done":
+                raise HTTPException(404, "результат недоступен")
+            text = body.result_md.strip()
+            if not text:
+                raise HTTPException(400, "пустой результат не сохраняем — "
+                                         "если версия не нужна, просто удалите её")
+            analyses.update(conn, analysis_id, result_md=text, edited=1)
+            transcripts.index_analysis(conn, analysis_id, row["job_id"], text)
+            return {"ok": True}
 
         @app.delete("/api/analyses/{analysis_id}")
         def delete_analysis(analysis_id: int):

@@ -131,10 +131,20 @@ def _m003_jobs_processed_path(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN processed_path TEXT")
 
 
+def _m004_analyses_edited(conn: sqlite3.Connection) -> None:
+    # Пометка «версия анализа изменена вручную» (план 6a): снимок защищает от
+    # случайных изменений, а осознанная правка пользователя — легальна, но
+    # должна быть видна (и перегенерация её должна предупреждать).
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(analyses)")]
+    if "edited" not in cols:
+        conn.execute("ALTER TABLE analyses ADD COLUMN edited INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "таблица speaker_aliases — имена и объединения спикеров", _m001_speaker_aliases),
     (2, "transcripts в БД + FTS5-индекс поиска", _m002_transcripts_fts),
     (3, "jobs.processed_path — фактическое расположение исходника", _m003_jobs_processed_path),
+    (4, "analyses.edited — пометка ручной правки версии", _m004_analyses_edited),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

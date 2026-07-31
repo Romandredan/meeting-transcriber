@@ -56,6 +56,34 @@ def get(conn: sqlite3.Connection, job_id: int) -> TranscriptResult | None:
     return TranscriptResult.from_dict(data)
 
 
+def update_segment_span(conn: sqlite3.Connection, job_id: int, start: float,
+                        end: float, text: str) -> bool:
+    """Ручная правка реплики (план 6b): заменяет прогон сырых сегментов,
+    покрывающий абзац [start, end], одним сегментом с отредактированным
+    текстом (спикер и границы — от прогона).
+
+    Редактируем мы АБЗАЦ, а храним сырые сегменты: склейка — представление.
+    Свёртка прогона в один сегмент — осознанная цена: субтитры в этом месте
+    станут одним куском, зато текст везде (БД, файлы, анализ, FTS) одинаковый.
+    Возвращает False, если транскрипта в БД нет."""
+    row = conn.execute("SELECT segments_json FROM transcripts WHERE job_id=?",
+                       (job_id,)).fetchone()
+    if row is None:
+        return False
+    segs = json.loads(row["segments_json"])
+    span = [i for i, s in enumerate(segs)
+            if s.get("start", 0.0) >= start - 0.5 and s.get("start", 0.0) < end - 0.5]
+    if not span:
+        raise IndexError(f"нет реплики с границами {start}–{end}")
+    merged = {"start": segs[span[0]]["start"], "end": segs[span[-1]]["end"],
+              "text": text, "speaker": segs[span[0]].get("speaker")}
+    segs[span[0]:span[-1] + 1] = [merged]
+    conn.execute("UPDATE transcripts SET segments_json=? WHERE job_id=?",
+                 (json.dumps(segs, ensure_ascii=False), job_id))
+    conn.commit()
+    return True
+
+
 def purge_job(conn: sqlite3.Connection, job_id: int) -> None:
     """Удаление встречи: транскрипт и все строки индекса (без commit — вызывается
     из job_queue.delete в его транзакции)."""

@@ -250,7 +250,7 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
         # файла на диск не удастся (нет прав, диск полон, файл занят и т.п.).
         # Иначе минуты работы GPU выбрасываются из-за постороннего сбоя ввода-вывода.
         analyses.update(conn, analysis_id, status="done", progress=1.0,
-                        stage="reduce", result_md=md)
+                        stage="reduce", result_md=md, edited=0)
         broker.publish(job_id, "reduce", 1.0, "done", analysis_id=analysis_id)
         transcripts.index_analysis(conn, analysis_id, job_id, md)
 

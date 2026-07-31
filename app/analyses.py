@@ -47,10 +47,11 @@ def claim_next(conn: sqlite3.Connection) -> sqlite3.Row | None:
 
 
 def update(conn: sqlite3.Connection, analysis_id: int, *, status=None, stage=None,
-           progress=None, chunks=None, result_md=None, error=None) -> None:
+           progress=None, chunks=None, result_md=None, error=None, edited=None) -> None:
     fields, values = [], []
     for name, val in (("status", status), ("stage", stage), ("progress", progress),
-                      ("chunks", chunks), ("result_md", result_md), ("error", error)):
+                      ("chunks", chunks), ("result_md", result_md), ("error", error),
+                      ("edited", edited)):
         if val is not None:
             fields.append(f"{name}=?")
             values.append(val)
