@@ -170,7 +170,13 @@
   --color-link-hover: #9db9ff;
 }
 [data-theme="matrix"] body {
-  background: var(--color-bg) url('/static/bg-matrix.png') center / cover fixed no-repeat;
+  /* Вуаль поверх «дождя»: фон остаётся фактурой, а не отвлекающим узором —
+     сквозь панели и текст он больше не проступает. */
+  background:
+    linear-gradient(color-mix(in srgb, #0a1428 84%, transparent),
+                    color-mix(in srgb, #0a1428 84%, transparent)),
+    url('/static/bg-matrix.png') center / cover fixed no-repeat,
+    var(--color-bg);
 }
 
 *, *::before, *::after { box-sizing: border-box; }

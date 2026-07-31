@@ -1672,7 +1672,7 @@ $("#add-path").onclick = () => enqueuePath($("#path-input").value);
 // значение ставит инлайн-скрипт в index.html до первой отрисовки).
 {
   const sel = $("#theme-sel");
-  sel.value = document.documentElement.dataset.theme || "chertezh";
+  sel.value = document.documentElement.dataset.theme || "matrix";
   sel.onchange = () => {
     document.documentElement.dataset.theme = sel.value;
     localStorage.setItem("mt-theme", sel.value);

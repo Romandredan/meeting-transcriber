@@ -6,9 +6,9 @@
   <title>Транскрибатор встреч</title>
   <script>
     // Тема применяется ДО первой отрисовки, чтобы не было вспышки дефолтной.
-    document.documentElement.dataset.theme = localStorage.getItem("mt-theme") || "chertezh";
+    document.documentElement.dataset.theme = localStorage.getItem("mt-theme") || "matrix";
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20">
+  <link rel="stylesheet" href="/static/style.css?v=21">
 </head>
 <body>
 <div class="app">
@@ -19,6 +19,7 @@
       <button class="nav-item" id="nav-settings" type="button">Словарь и шаблоны</button>
     </div>
     <div class="topbar-right">
+      <span class="hint" style="flex:none">Тема</span>
       <select class="input theme-sel" id="theme-sel" title="Тема оформления">
         <option value="chertezh">Чертёж</option>
         <option value="den">День</option>
@@ -167,6 +168,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="/static/app.js?v=20"></script>
+<script src="/static/app.js?v=21"></script>
 </body>
 </html>
