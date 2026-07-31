@@ -35,6 +35,14 @@ jobs:
           git archive --format=zip --prefix="${NAME}/" -o "${NAME}.zip" HEAD
           ls -lh "${NAME}.zip"
 
+      - name: Подтянуть аннотацию тега
+        # --notes-from-tag читает объект аннотированного тега из локального git.
+        # checkout на tag-push кладёт репозиторий в detached HEAD по SHA и сам
+        # объект тега не гарантирует — без него заметки молча деградируют до
+        # сообщения коммита (поймано дважды на v1.6.0). fetch --force: тег мог
+        # быть пересоздан после публикации.
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
       - name: Создать релиз
         env:
           GH_TOKEN: ${{ github.token }}
