@@ -155,8 +155,13 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         return {"id": jid}
 
     @app.get("/api/jobs")
-    def list_jobs():
-        return [dict(r) for r in job_queue.list_jobs(conn)]
+    def list_jobs(limit: int = 50):
+        # Страничная выдача: UI опрашивает первую страницу каждые 5 с и
+        # увеличивает limit кнопкой «Показать ещё» — поэтому вместе со
+        # списком отдаём полное число встреч.
+        limit = max(1, min(limit, 500))
+        return {"jobs": [dict(r) for r in job_queue.list_jobs(conn, limit)],
+                "total": job_queue.count_jobs(conn)}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: int):

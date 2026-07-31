@@ -47,6 +47,8 @@ const S = {
   eta: new Map(),             // jobId → { t0, p0 } для оценки остатка
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
+  jobsLimit: 50,              // размер страницы списка встреч (растёт кнопкой «Показать ещё»)
+  jobsTotal: 0,               // полное число встреч на сервере
   inflight: new Set(),
   form: null,                 // черновик шаблона: { id, label, name, desc, body, enabled }
   offline: false,
@@ -366,10 +368,12 @@ async function saveTemplate() {
 /* ─────────────────────────── очередь ─────────────────────────── */
 
 async function refreshJobs() {
-  let jobs;
-  try { jobs = await api("/api/jobs"); }
+  let data;
+  try { data = await api(`/api/jobs?limit=${S.jobsLimit}`); }
   catch { setOffline(true); return; }
+  const jobs = data.jobs || [];
   S.jobs = jobs;
+  S.jobsTotal = data.total ?? jobs.length;
   const work = jobs.filter((j) => j.status === "processing" || j.status === "queued").length;
   $("#queue-status").textContent = work
     ? "GPU занят · " + work + " в работе"
@@ -666,6 +670,13 @@ function renderQueue() {
     if (job.status === "done") lazyLoadDetails(job.id);
   });
   [...list.children].forEach((el) => { if (!el.dataset.id || !seen.has(el.dataset.id)) el.remove(); });
+  // Страничность: «Показать ещё» увеличивает limit и перезапрашивает — первая
+  // страница продолжает опрашиваться каждые 5 с как раньше.
+  if (S.jobs.length < S.jobsTotal) {
+    list.insertAdjacentHTML("beforeend", `<div class="jobs-more">
+      <button class="btn btn-ghost" data-act="more-jobs" type="button">Показать ещё ${Math.min(50, S.jobsTotal - S.jobs.length)} из ${S.jobsTotal - S.jobs.length}</button>
+    </div>`);
+  }
   syncPanels();
 }
 
@@ -1355,6 +1366,11 @@ document.addEventListener("click", async (ev) => {
       case "gall":
         ev.stopPropagation();
         runGlobalSearch(true);
+        return;
+      case "more-jobs":
+        ev.stopPropagation();
+        S.jobsLimit += 50;
+        refreshJobs();
         return;
       case "upload-dismiss":
         ev.stopPropagation();

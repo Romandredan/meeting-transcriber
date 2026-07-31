@@ -92,6 +92,10 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def count_jobs(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("SELECT COUNT(*) c FROM jobs").fetchone()["c"])
+
+
 def recover_stuck(conn: sqlite3.Connection) -> int:
     cur = conn.execute(
         "UPDATE jobs SET status='queued', stage='', progress=0 WHERE status='processing'"

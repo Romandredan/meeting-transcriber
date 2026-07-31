@@ -351,6 +351,7 @@ select.input option { background: var(--color-surface); color: var(--color-text)
 .run-bar > .track { width: 120px; height: 4px; position: relative; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
 .run-bar > .track > i { position: absolute; inset: 0; background: var(--color-accent); animation: pulse 1.4s ease-in-out infinite; }
 .queue-empty { padding: 34px 22px; text-align: center; font-size: 14px; color: var(--color-muted); }
+.jobs-more { display: flex; justify-content: center; padding: 10px 22px; border-top: 1px solid var(--color-hairline); }
 
 /* Глобальный поиск: результаты подменяют список очереди, пока запрос не очищен. */
 .g-head {

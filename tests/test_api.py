@@ -36,8 +36,20 @@ def test_create_and_list_job(tmp_path):
     r = client.post("/api/jobs", json={"path": str(f), "settings": {"diarize": False}})
     assert r.status_code == 200
     jid = r.json()["id"]
-    lst = client.get("/api/jobs").json()
+    lst = client.get("/api/jobs").json()["jobs"]
     assert any(j["id"] == jid for j in lst)
+
+
+def test_list_jobs_paginates(tmp_path):
+    client, conn = make_client(tmp_path)
+    for i in range(7):
+        f = tmp_path / f"a{i}.mp4"; f.write_bytes(b"x")
+        client.post("/api/jobs", json={"path": str(f), "settings": {}})
+    page = client.get("/api/jobs", params={"limit": 3}).json()
+    assert len(page["jobs"]) == 3
+    assert page["total"] == 7
+    # по умолчанию — 50, но не больше, чем есть
+    assert len(client.get("/api/jobs").json()["jobs"]) == 7
 
 
 def test_create_job_strips_quotes_and_whitespace(tmp_path):
@@ -79,7 +91,7 @@ def test_upload_rejects_empty_body(tmp_path, monkeypatch):
     assert r.status_code == 400
     # Временный файл подчищен, в очередь ничего не встало.
     assert not list(config.INBOX_DIR.iterdir())
-    assert client.get("/api/jobs").json() == []
+    assert client.get("/api/jobs").json()["jobs"] == []
 
 
 def test_upload_does_not_overwrite_existing(tmp_path, monkeypatch):
