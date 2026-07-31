@@ -80,10 +80,21 @@ function setOffline(off) {
 let toastTimer = null;
 function toast(text) {
   const el = $("#toast");
+  el.classList.remove("toast-error");
   el.textContent = text;
   el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+// Ошибки — липкий тост: за 2 с её легко пропустить, поэтому висит, пока
+// не закроют крестиком или не случится следующее успешное действие.
+function toastError(text) {
+  const el = $("#toast");
+  clearTimeout(toastTimer);
+  el.innerHTML = `<span>${esc(text)}</span><button class="toast-close" type="button" aria-label="Закрыть">×</button>`;
+  el.classList.add("show", "toast-error");
+  $(".toast-close", el).onclick = () => el.classList.remove("show", "toast-error");
 }
 
 /* ─────────────── инлайн-подтверждения (без системных confirm) ─────────────── */
@@ -197,7 +208,7 @@ function saveSettingsSoon() {
         body: JSON.stringify({ settings: S.settings, formats: S.formats }),
       });
       toast("Настройки сохранены");
-    } catch (e) { toast("Не удалось сохранить настройки: " + e.message); }
+    } catch (e) { toastError("Не удалось сохранить настройки: " + e.message); }
   }, 700);
 }
 
@@ -335,7 +346,7 @@ function blankForm() { return { id: null, label: "", name: "", desc: "", body: "
 
 async function saveTemplate() {
   const f = S.form;
-  if (!f.label.trim() || !f.name.trim() || !f.body.trim()) { toast("Заполните метку, название и промпт"); return; }
+  if (!f.label.trim() || !f.name.trim() || !f.body.trim()) { toastError("Заполните метку, название и промпт"); return; }
   const body = {
     label: f.label.trim(), display_name: f.name.trim(), description: f.desc.trim(),
     prompt_body: f.body, enabled: f.enabled,
@@ -346,7 +357,7 @@ async function saveTemplate() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-  } catch (e) { toast("Шаблон не сохранён: " + e.message); return; }
+  } catch (e) { toastError("Шаблон не сохранён: " + e.message); return; }
   S.form = null;
   await loadTemplates();
   toast("Шаблон сохранён");
@@ -811,7 +822,7 @@ async function loadSpeakers(jobId) {
     }
     S.spk.set(jobId, st);
   } catch (e) {
-    toast("Не удалось загрузить спикеров: " + e.message);
+    toastError("Не удалось загрузить спикеров: " + e.message);
     S.spk.delete(jobId);
   }
   if (S.open === jobId) renderSpeakerPanel(jobId);
@@ -881,7 +892,7 @@ async function saveSpeakers(jobId) {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ aliases }),
     });
-  } catch (e) { toast(e.message); return; }
+  } catch (e) { toastError(e.message); return; }
   toast("Имена спикеров сохранены");
   // Транскрипт и мета теперь другие (имена, число спикеров) — сбрасываем кэши
   // и сигнатуру списка реплик: число реплик не изменилось, и без сброса rsig
@@ -972,7 +983,7 @@ async function saveSegEdit(jobId, idx) {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ start: seg.start, end: seg.end, text: ta.value }),
     });
-  } catch (e) { toast("Не сохранено: " + e.message); return; }
+  } catch (e) { toastError("Не сохранено: " + e.message); return; }
   // Правим локальный кэш — перерисовка без перезагрузки транскрипта.
   seg.text = ta.value.trim();
   S.segEdit = null;
@@ -1172,11 +1183,11 @@ function renderAnalysisCol(jobId) {
 
 async function runAnalysis(jobId, force) {
   const a = analysisState(jobId);
-  if (!a.label) { toast("Нет включённых шаблонов анализа"); return; }
+  if (!a.label) { toastError("Нет включённых шаблонов анализа"); return; }
   if (a.current && a.current.edited && !force) { askConfirm(`regen-${jobId}`); return; }
   clearConfirm();
   try { await api(`/api/jobs/${jobId}/analyses`, jsonBody({ label: a.label })); }
-  catch (e) { toast("Анализ не поставлен: " + e.message); return; }
+  catch (e) { toastError("Анализ не поставлен: " + e.message); return; }
   toast("Анализ поставлен в очередь");
   loadAnalyses(jobId);
 }
@@ -1191,7 +1202,7 @@ async function saveAnalysisEdit(analysisId, jobId) {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ result_md: ta.value }),
     });
-  } catch (e) { toast("Не сохранено: " + e.message); return; }
+  } catch (e) { toastError("Не сохранено: " + e.message); return; }
   // Обновляем локальный кэш версии и выходим из режима правки — колонка
   // перерисуется (флаг редактирования входит в сигнатуру asig).
   const st = S.an.get(jobId);
@@ -1213,7 +1224,7 @@ async function enqueuePath(path) {
     $("#path-input").value = "";
     toast("Файл поставлен в очередь");
     refreshJobs();
-  } catch (e) { toast("Не добавлено: " + e.message); }
+  } catch (e) { toastError("Не добавлено: " + e.message); }
 }
 
 // Загрузка файла на сервер целиком: браузер не отдаёт полный путь к локальному
@@ -1308,13 +1319,13 @@ document.addEventListener("click", async (ev) => {
           toast(r.status === "cancelling"
             ? "Отменяем — расшифровка остановится на ближайшей стадии"
             : "Встреча снята с очереди");
-        } catch (e) { toast("Не отменено: " + e.message); }
+        } catch (e) { toastError("Не отменено: " + e.message); }
         refreshJobs();
         return;
       case "requeue":
         ev.stopPropagation();
         try { await api(`/api/jobs/${id}/requeue`, { method: "POST" }); toast("Возвращено в очередь"); }
-        catch (e) { toast("Не получилось: " + e.message); }
+        catch (e) { toastError("Не получилось: " + e.message); }
         refreshJobs();
         return;
       case "drop":
@@ -1331,7 +1342,7 @@ document.addEventListener("click", async (ev) => {
         const purge = a.dataset.act === "drop-purge";
         clearConfirm();
         try { await api(`/api/jobs/${id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }); }
-        catch (e) { toast("Не удалено: " + e.message); }
+        catch (e) { toastError("Не удалено: " + e.message); }
         if (S.open === id) S.open = null;
         toast(purge ? "Встреча и файлы результатов удалены" : "Встреча убрана из списка");
         refreshJobs();
@@ -1369,7 +1380,7 @@ document.addEventListener("click", async (ev) => {
         const st = analysisState(id);
         if (st.current) {
           try { await navigator.clipboard.writeText(st.current.result_md || ""); toast("Скопировано"); }
-          catch { toast("Браузер не дал доступ к буферу обмена"); }
+          catch { toastError("Браузер не дал доступ к буферу обмена"); }
         }
         return;
       }
@@ -1385,7 +1396,7 @@ document.addEventListener("click", async (ev) => {
       case "delan-yes": {
         ev.stopPropagation();
         clearConfirm();
-        try { await api(`/api/analyses/${id}`, { method: "DELETE" }); } catch (e) { toast(e.message); }
+        try { await api(`/api/analyses/${id}`, { method: "DELETE" }); } catch (e) { toastError(e.message); }
         loadAnalyses(Number(a.dataset.job));
         return;
       }
@@ -1396,7 +1407,7 @@ document.addEventListener("click", async (ev) => {
           toast(r.status === "cancelling"
             ? "Отменяем — анализ остановится на ближайшей стадии"
             : "Анализ снят с очереди");
-        } catch (e) { toast("Не отменено: " + e.message); }
+        } catch (e) { toastError("Не отменено: " + e.message); }
         loadAnalyses(Number(a.dataset.job));
         return;
       }
@@ -1440,7 +1451,7 @@ document.addEventListener("click", async (ev) => {
               prompt_body: t.prompt_body, enabled: !t.enabled,
             }),
           });
-        } catch (e) { toast(e.message); }
+        } catch (e) { toastError(e.message); }
         loadTemplates();
         return;
       }
@@ -1464,7 +1475,7 @@ document.addEventListener("click", async (ev) => {
       case "tpl-del-yes":
         ev.stopPropagation();
         clearConfirm();
-        try { await api(`/api/templates/${id}`, { method: "DELETE" }); } catch (e) { toast(e.message); }
+        try { await api(`/api/templates/${id}`, { method: "DELETE" }); } catch (e) { toastError(e.message); }
         if (S.form && S.form.id === id) S.form = null;
         loadTemplates();
         return;

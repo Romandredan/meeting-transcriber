@@ -409,6 +409,18 @@ body.offline .offline { display: block; }
   transition: opacity .18s, transform .18s; pointer-events: none;
 }
 .toast.show { opacity: 1; transform: none; }
+/* Липкий тост ошибки: красная рамка, крестик, без автозакрытия. */
+.toast.toast-error {
+  display: flex; gap: 12px; align-items: flex-start; max-width: 420px;
+  border-color: color-mix(in srgb, var(--color-danger) 55%, transparent);
+  color: var(--color-danger-text);
+  pointer-events: auto;   // крестик должен нажиматься (обычный тост не перехватывает клики)
+}
+.toast-close {
+  background: none; border: 0; color: inherit; cursor: pointer;
+  font-size: 16px; line-height: 1; padding: 0 2px; opacity: .7;
+}
+.toast-close:hover { opacity: 1; }
 [hidden] { display: none !important; }
 
 @media (max-width: 1100px) {
