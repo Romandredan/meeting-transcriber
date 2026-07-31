@@ -532,8 +532,8 @@ function rowHtml(job) {
       <button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>`;
   } else {
     actions = links + (files.length ? `<a href="/api/jobs/${job.id}/download_zip" data-stop="1">zip</a>` : "") +
-      `<button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>` +
-      `<span class="toggle-text">${isOpen ? "свернуть ▴" : "открыть ▾"}</span>`;
+      `<span class="toggle-text">${isOpen ? "свернуть ▴" : "открыть ▾"}</span>` +
+      `<button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>`;
   }
 
   return `<div class="job-name ${job.status === "cancelled" ? "off" : ""}">
