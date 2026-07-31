@@ -379,8 +379,9 @@ async function refreshJobs() {
     const n = k === "all" ? jobs.length
       : k === "work" ? work
       : k === "done" ? jobs.filter((j) => j.status === "done").length
+      : k === "cancelled" ? jobs.filter((j) => j.status === "cancelled").length
       : jobs.filter((j) => j.status === "error").length;
-    el.textContent = ({ all: "Все ", work: "В работе ", done: "Готово ", error: "Ошибки " })[k] + n;
+    el.textContent = ({ all: "Все ", work: "В работе ", done: "Готово ", cancelled: "Отменённые ", error: "Ошибки " })[k] + n;
   });
   renderQueue();
 }
@@ -391,7 +392,8 @@ function visibleJobs() {
     if (q && j.filename.toLowerCase().indexOf(q) === -1) return false;
     if (S.filter === "work") return j.status === "processing" || j.status === "queued";
     if (S.filter === "done") return j.status === "done";
-    if (S.filter === "error") return j.status === "error" || j.status === "cancelled";
+    if (S.filter === "cancelled") return j.status === "cancelled";
+    if (S.filter === "error") return j.status === "error";
     return true;
   });
 }
