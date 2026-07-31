@@ -251,6 +251,12 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
                                   vocabulary=settings_global.vocabulary,
                                   report=report)
 
+        # Отмена во время LLM-вызовов: report-проверки прошли до длинного
+        # одиночного вызова, и без этой точки «отменить» посреди прогона
+        # молча сохранял бы результат (поймано вживую на коротком анализе).
+        if analyses.cancel_requested(analysis_id):
+            raise analyses.AnalysisCancelled()
+
         # БД — источник истины: результат должен сохраниться, даже если запись
         # файла на диск не удастся (нет прав, диск полон, файл занят и т.п.).
         # Иначе минуты работы GPU выбрасываются из-за постороннего сбоя ввода-вывода.

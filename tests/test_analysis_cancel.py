@@ -69,6 +69,28 @@ def test_cancel_processing_is_cooperative(tmp_path):
     assert not analyses.cancel_requested(aid)  # флаг очищен — не переедет на повтор
 
 
+def test_cancel_during_llm_call_discards_result(tmp_path):
+    """Отмена ПОСЛЕДНЕЙ report-проверки (во время одиночного LLM-вызова):
+    результат не сохраняется, статус cancelled. Иначе «отменить» посреди
+    короткого анализа молча завершалось done (поймано вживую)."""
+    conn = make_conn(tmp_path)
+    jid = _job_with_transcript(conn, tmp_path)
+    aid = analyses.enqueue(conn, jid, "daily", "Дейлик", "тело", "m")
+    row = analyses.claim_next(conn)
+
+    class CancellingProvider(FakeProvider):
+        def generate(self, system, user):
+            analyses.request_cancel(aid)   # пользователь жмёт «Отменить» во время вызова
+            return super().generate(system, user)
+
+    worker.process_analysis(conn, ProgressBroker(), _FakeEngine(),
+                            CancellingProvider(["# П"]), row,
+                            settings_global=Settings(), output_dir=str(tmp_path / "out"))
+    done = analyses.get(conn, aid)
+    assert done["status"] == "cancelled"
+    assert done["result_md"] is None
+
+
 def test_cancel_done_or_missing_rejected(tmp_path):
     client, conn = make_client(tmp_path)
     jid = _job_with_transcript(conn, tmp_path)
