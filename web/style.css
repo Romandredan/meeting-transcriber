@@ -61,6 +61,15 @@
   --color-hairline: color-mix(in srgb, #e8e9ea 8%, transparent);
   --color-muted: color-mix(in srgb, #e8e9ea 58%, transparent);
   --color-muted-strong: color-mix(in srgb, #e8e9ea 70%, transparent);
+  /* Темы (data-theme на <html>) переопределяют всё нижележащее — хардкода
+     цветов в компонентах нет, только токены. */
+  --color-on-accent: #12181d;
+  --color-tag-accent-text: #bcd6ee;
+  --color-tag-neutral-text: #b6b8ba;
+  --color-tag-danger-text: #eeb4ae;
+  --color-toast-bg: #101214;
+  --color-link-hover: #a3c3e0;
+  --color-input-bg: #101214;
 
   --font-heading: "Barlow Condensed", system-ui, sans-serif;
   --font-heading-weight: 600;
@@ -78,6 +87,92 @@
   --shadow-md: 0 3px 10px rgba(0, 0, 0, .55);
 }
 
+/* ── темы: переключатель в топбаре, выбор в localStorage (mt-theme) ───────── */
+
+/* «День» — светлая. */
+[data-theme="den"] {
+  --color-bg: #f2f4f7;
+  --color-surface: #ffffff;
+  --color-text: #1d2733;
+  --color-accent: #2f6fd0;
+  --color-accent-600: #2a62ba;
+  --color-accent-700: #2455a3;
+  --color-danger: #c0433b;
+  --color-danger-text: #a53831;
+  --color-divider: color-mix(in srgb, #1d2733 18%, transparent);
+  --color-hairline: color-mix(in srgb, #1d2733 9%, transparent);
+  --color-muted: color-mix(in srgb, #1d2733 58%, transparent);
+  --color-muted-strong: color-mix(in srgb, #1d2733 72%, transparent);
+  --color-on-accent: #ffffff;
+  --color-tag-accent-text: #1e4f9e;
+  --color-tag-neutral-text: #4a5462;
+  --color-tag-danger-text: #a53831;
+  --color-toast-bg: #ffffff;
+  --color-link-hover: #2455a3;
+  --color-input-bg: #ffffff;
+  --shadow-md: 0 3px 12px rgba(29, 39, 51, .18);
+}
+
+/* «Уголь» — почти чёрная (OLED), приглушённый акцент. */
+[data-theme="ugol"] {
+  --color-bg: #0a0b0c;
+  --color-surface: #121416;
+  --color-text: #d7d9db;
+  --color-accent: #5d84a8;
+  --color-accent-600: #4f7498;
+  --color-accent-700: #436488;
+  --color-tag-accent-text: #a8c4dc;
+  --color-tag-neutral-text: #9aa0a4;
+  --color-tag-danger-text: #d08a82;
+  --color-toast-bg: #08090a;
+  --color-link-hover: #8fb4d4;
+}
+
+/* «Терминал» — тёмная с зелёным акцентом. */
+[data-theme="terminal"] {
+  --color-bg: #0b1210;
+  --color-surface: #101a15;
+  --color-text: #d3e6da;
+  --color-accent: #46c378;
+  --color-accent-600: #3aa968;
+  --color-accent-700: #319059;
+  --color-danger-text: #d0837c;
+  --color-divider: color-mix(in srgb, #46c378 20%, transparent);
+  --color-hairline: color-mix(in srgb, #46c378 10%, transparent);
+  --color-muted: color-mix(in srgb, #d3e6da 55%, transparent);
+  --color-muted-strong: color-mix(in srgb, #d3e6da 70%, transparent);
+  --color-tag-accent-text: #8fe0b2;
+  --color-tag-neutral-text: #93a89c;
+  --color-tag-danger-text: #e09b94;
+  --color-toast-bg: #0a100d;
+  --color-link-hover: #7fd8a4;
+}
+
+/* «Матрица» — глубокий синий + дождь кода фоном (web/bg-matrix.png). */
+[data-theme="matrix"] {
+  --color-bg: #0a1428;
+  --color-surface: #101d3a;
+  --color-text: #c9d6ee;
+  --color-accent: #5b8cff;
+  --color-accent-600: #4a7ae8;
+  --color-accent-700: #3d68cf;
+  --color-danger: #d05a50;
+  --color-danger-text: #e08a82;
+  --color-divider: color-mix(in srgb, #5b8cff 22%, transparent);
+  --color-hairline: color-mix(in srgb, #5b8cff 11%, transparent);
+  --color-muted: color-mix(in srgb, #c9d6ee 55%, transparent);
+  --color-muted-strong: color-mix(in srgb, #c9d6ee 72%, transparent);
+  --color-on-accent: #0a1428;
+  --color-tag-accent-text: #a9c2ff;
+  --color-tag-neutral-text: #8b98b8;
+  --color-tag-danger-text: #eda49c;
+  --color-toast-bg: #0a1224;
+  --color-link-hover: #9db9ff;
+}
+[data-theme="matrix"] body {
+  background: var(--color-bg) url('/static/bg-matrix.png') center / cover fixed no-repeat;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--color-bg); }
 body {
@@ -85,7 +180,7 @@ body {
   font-size: 15px; line-height: 1.55; background: var(--color-bg); color: var(--color-text);
 }
 a { color: var(--color-accent); text-underline-offset: 3px; }
-a:hover { color: #a3c3e0; }
+a:hover { color: var(--color-link-hover); }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 ::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
@@ -115,7 +210,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   padding: var(--space-2) calc(var(--space-3) * 1.2); white-space: nowrap;
 }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: #12181d; }
+.btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); }
 .btn-primary:hover:not(:disabled) { background: var(--color-accent-600); }
 .btn-primary:active:not(:disabled) { background: var(--color-accent-700); }
 .btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
@@ -130,9 +225,9 @@ code { font-family: var(--font-mono); font-size: .92em; }
   display: inline-flex; align-items: center; font-size: 11px; letter-spacing: .02em;
   padding: 3px 10px; border-radius: 0; white-space: nowrap;
 }
-.tag-accent { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: #bcd6ee; }
-.tag-neutral { background: color-mix(in srgb, #e8e9ea 9%, transparent); color: #b6b8ba; }
-.tag-danger { background: color-mix(in srgb, var(--color-danger) 20%, transparent); color: #eeb4ae; }
+.tag-accent { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-tag-accent-text); }
+.tag-neutral { background: color-mix(in srgb, var(--color-text) 9%, transparent); color: var(--color-tag-neutral-text); }
+.tag-danger { background: color-mix(in srgb, var(--color-danger) 20%, transparent); color: var(--color-tag-danger-text); }
 .tag-outline { border: 1px solid var(--color-divider); color: var(--color-muted); }
 .tag-run { animation: pulse 1.6s ease-in-out infinite; }
 .tag-more { border: 0; cursor: pointer; font-family: inherit; padding: 3px 8px; }
@@ -144,9 +239,9 @@ code { font-family: var(--font-mono); font-size: .92em; }
 .input {
   width: 100%; min-height: 36px; padding: 6px 10px; font: inherit; font-size: 14px;
   color: var(--color-text); caret-color: var(--color-accent);
-  background: #101214; border: 1px solid var(--color-divider); border-radius: 0;
+  background: var(--color-input-bg); border: 1px solid var(--color-divider); border-radius: 0;
 }
-.input::placeholder { color: color-mix(in srgb, #e8e9ea 38%, transparent); }
+.input::placeholder { color: color-mix(in srgb, var(--color-text) 38%, transparent); }
 .input:hover { border-color: color-mix(in srgb, var(--color-text) 45%, transparent); }
 .input:focus-visible { border-color: var(--color-accent); outline-offset: 0; }
 textarea.input { min-height: 90px; resize: vertical; line-height: 1.6; }
@@ -160,7 +255,7 @@ select.input { appearance: none; padding-right: 26px; }
   font-size: 13px; cursor: pointer; user-select: none;
 }
 .seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
-.seg-opt.on { background: var(--color-accent); color: #12181d; }
+.seg-opt.on { background: var(--color-accent); color: var(--color-on-accent); }
 .seg-opt:not(.on):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
 
 /* ── таблицы ─────────────────────────────────────────────────────────────── */
@@ -188,6 +283,10 @@ select.input { appearance: none; padding-right: 26px; }
 .nav-item.on { color: var(--color-text); border-bottom-color: var(--color-accent); }
 .topbar-right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
 .topbar-status { font-size: 12.5px; color: var(--color-muted); }
+.theme-sel {
+  min-height: 30px; width: auto; padding: 2px 8px; font-size: 13px;
+  background: transparent; color: var(--color-text);
+}
 
 .zone-head { display: flex; align-items: baseline; gap: 10px; }
 .zone-num {
@@ -405,7 +504,7 @@ select.input option { background: var(--color-surface); color: var(--color-text)
 body.offline .offline { display: block; }
 .toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 20; padding: 10px 16px;
-  font-size: 13.5px; background: #101214; border: 1px solid var(--color-divider);
+  font-size: 13.5px; background: var(--color-toast-bg); border: 1px solid var(--color-divider);
   box-shadow: var(--shadow-md); opacity: 0; transform: translateY(6px);
   transition: opacity .18s, transform .18s; pointer-events: none;
 }

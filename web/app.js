@@ -1668,6 +1668,16 @@ document.addEventListener("keydown", (ev) => {
 });
 
 $("#add-path").onclick = () => enqueuePath($("#path-input").value);
+// Тема оформления: выбор — в localStorage и data-theme на <html> (начальное
+// значение ставит инлайн-скрипт в index.html до первой отрисовки).
+{
+  const sel = $("#theme-sel");
+  sel.value = document.documentElement.dataset.theme || "chertezh";
+  sel.onchange = () => {
+    document.documentElement.dataset.theme = sel.value;
+    localStorage.setItem("mt-theme", sel.value);
+  };
+}
 $("#nav-home").onclick = () => showScreen("home");
 $("#nav-settings").onclick = () => showScreen("settings");
 $("#to-settings").onclick = () => showScreen("settings");

@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Транскрибатор встреч</title>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <script>
+    // Тема применяется ДО первой отрисовки, чтобы не было вспышки дефолтной.
+    document.documentElement.dataset.theme = localStorage.getItem("mt-theme") || "chertezh";
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
 <div class="app">
@@ -15,6 +19,13 @@
       <button class="nav-item" id="nav-settings" type="button">Словарь и шаблоны</button>
     </div>
     <div class="topbar-right">
+      <select class="input theme-sel" id="theme-sel" title="Тема оформления">
+        <option value="chertezh">Чертёж</option>
+        <option value="den">День</option>
+        <option value="ugol">Уголь</option>
+        <option value="terminal">Терминал</option>
+        <option value="matrix">Матрица</option>
+      </select>
       <span class="tag tag-neutral" id="llm-tag">Анализ: проверяем…</span>
       <span class="topbar-status" id="queue-status">Загрузка…</span>
     </div>
@@ -156,6 +167,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="/static/app.js?v=19"></script>
+<script src="/static/app.js?v=20"></script>
 </body>
 </html>
