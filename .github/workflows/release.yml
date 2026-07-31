@@ -33,9 +33,11 @@ jobs:
       - name: Создать релиз
         env:
           GH_TOKEN: ${{ github.token }}
+        # Заметки релиза — из аннотации тега: тег всегда создаём аннотированным
+        # (git tag -a v1.x.x -m "…"), развёрнутое описание попадает в релиз само.
         run: |
           TAG="${GITHUB_REF_NAME}"
           gh release create "${TAG}" \
             "meeting-transcriber-${TAG}.zip" \
             --title "${TAG}" \
-            --generate-notes
+            --notes-from-tag
