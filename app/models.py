@@ -81,6 +81,9 @@ class Settings:
     diarize: bool = True
     num_speakers: int | None = None
     vocabulary: str = ""
+    # Авто-анализ после расшифровки: "" — выкл, "auto" — классификация типа
+    # встречи LLM, иначе — метка шаблона, которым анализ ставится автоматически.
+    auto_analyze: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -93,4 +96,5 @@ class Settings:
             diarize=data.get("diarize", True),
             num_speakers=data.get("num_speakers"),
             vocabulary=data.get("vocabulary", ""),
+            auto_analyze=data.get("auto_analyze", "") or "",
         )

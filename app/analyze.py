@@ -175,6 +175,46 @@ GLOSSARY_HEADER = (
 )
 
 
+CLASSIFY_SYSTEM = (
+    "Ты определяешь тип рабочей встречи по фрагменту её расшифровки. "
+    "Отвечай строго одной меткой из предложенного списка — одним словом, "
+    "без пояснений и знаков препинания. Если ни один тип не подходит — "
+    "ответь словом none."
+)
+
+# Фрагмента хватает, чтобы отличить дейлик от протокола; больше — только дольше.
+CLASSIFY_HEAD_CHARS = 2000
+
+
+def classify_meeting(provider, transcript_head: str,
+                     templates: list[dict]) -> str | None:
+    """Выбирает шаблон анализа под тип встречи (режим auto_analyze='auto').
+
+    templates — включённые шаблоны (ряды templates_store). Возвращает метку
+    или None: мусорный/пустой ответ и явный «none» — не ставить анализ.
+    Парсинг терпим к обрамлению (кавычки, точка, «Метка: protocol»):
+    ищем первое вхождение любой известной метки как отдельного слова."""
+    if not templates:
+        return None
+    listing = "\n".join(f"- {t['label']} — {t['display_name']}"
+                        + (f": {t['description']}" if t["description"] else "")
+                        for t in templates)
+    user = (f"Типы встреч:\n{listing}\n\n"
+            f"Фрагмент расшифровки:\n{transcript_head}\n\n"
+            f"Ответь одной меткой из списка или словом none.")
+    try:
+        out = provider.generate(CLASSIFY_SYSTEM, user)
+    except Exception:
+        return None
+    if not out:
+        return None
+    low = out.strip().lower()
+    for t in templates:
+        if re.search(rf"(?<![\w-]){re.escape(t['label'].lower())}(?![\w-])", low):
+            return t["label"]
+    return None
+
+
 def build_system_prompt(vocabulary: str) -> str:
     """Системная часть + глоссарий из settings.vocabulary.
 

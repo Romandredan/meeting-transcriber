@@ -166,6 +166,18 @@ def create_app(conn, broker, settings_state) -> FastAPI:
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
+        auto = (body.settings.get("auto_analyze") or "").strip()
+        if auto:
+            if not config.ANALYZE_ENABLED:
+                raise HTTPException(
+                    400, "авто-анализ невозможен: стадия анализа выключена "
+                         "(ANALYZE_ENABLED=false)")
+            if auto != "auto":
+                tpl = templates_store.get_by_label(conn, auto)
+                if tpl is None or not tpl["enabled"]:
+                    raise HTTPException(
+                        400, f"авто-анализ: шаблон «{auto}» недоступен — выберите "
+                             f"включённый шаблон, «auto» или выключите авто-анализ")
         settings_state.set_global(Settings.from_dict(body.settings))
         settings_state.set_formats(body.formats)
         return {"ok": True}

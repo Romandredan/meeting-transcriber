@@ -199,6 +199,27 @@ function renderSettingsInputs() {
   $("#settings-summary").textContent =
     "Словарь: " + words.length + " слов · Шаблоны анализа: " + S.templates.filter((t) => t.enabled).length +
     " · Форматов: " + S.formats.length;
+  renderAutoAnalyze();
+}
+
+// Селект авто-анализа: «Выкл» / «Авто» (классификация типа встречи) /
+// включённые шаблоны. Без работающего анализа (Ollama) — выключен с пояснением.
+function renderAutoAnalyze() {
+  const sel = $("#auto-analyze");
+  if (!sel) return;
+  const cur = S.settings.auto_analyze || "";
+  const enabled = S.templates.filter((t) => t.enabled);
+  sel.innerHTML = `<option value="">Выкл</option>
+    <option value="auto">Авто — по типу встречи</option>`
+    + enabled.map((t) => `<option value="${esc(t.label)}">${esc(t.display_name)}</option>`).join("");
+  sel.value = cur;
+  if (sel.value !== cur) sel.value = "";   // шаблон удалили/выключили — показываем «Выкл»
+  sel.disabled = !S.llm.enabled;
+  $("#auto-analyze-hint").textContent = !S.llm.enabled
+    ? "Анализ выключен или Ollama недоступна — авто-анализ невозможен."
+    : cur === "auto" ? "После расшифровки LLM сама определит тип встречи и выберет шаблон."
+    : cur ? "Каждая готовая расшифровка будет автоматически уходить на анализ по этому шаблону."
+    : "";
 }
 
 /* ─────────────────────────── LLM и шаблоны ─────────────────────────── */
@@ -218,6 +239,7 @@ async function loadLlm() {
     ? "ANALYZE_ENABLED=false — блок анализов отключён в .env"
     : S.llm.ok ? (S.llm.warning || "Модель отвечает") : (S.llm.error || "Ollama не отвечает");
   $("#tpl-new").disabled = !S.llm.enabled;
+  renderAutoAnalyze();   // доступность селекта авто-анализа зависит от статуса Ollama
 }
 
 async function loadTemplates() {
@@ -1309,6 +1331,12 @@ document.addEventListener("input", (ev) => {
 
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.id === "auto-analyze") {
+    S.settings.auto_analyze = t.value;
+    saveSettingsSoon();
+    renderAutoAnalyze();
+    return;
+  }
   if (t.classList.contains("spk-merge")) {
     const st = S.spk.get(Number(t.dataset.id));
     const row = st && st.rows.find((r) => r.label === t.dataset.label);

@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 
-from app import analyses, analyze, config, ffmpeg_tool, job_queue, speakers, transcripts, writers
+from app import analyses, analyze, config, ffmpeg_tool, job_queue, speakers, templates_store, transcripts, writers
 from app.models import Settings, TranscriptResult
 
 _log = logging.getLogger(__name__)
@@ -83,9 +83,57 @@ def describe_error(e: Exception) -> str:
     return raw
 
 
+def maybe_auto_analyze(conn, engine, provider, job_id: int,
+                       settings: Settings) -> None:
+    """Авто-постановка анализа после успешной расшифровки (настройка
+    auto_analyze: метка шаблона или 'auto' — классификация типа встречи LLM).
+
+    Вызывается из process_job ПОСЛЕ статуса done: сбой здесь не должен
+    портить уже готовую расшифровку, поэтому все ошибки — только в лог.
+    Повторный запуск той же метки не дублируем, пока она активна (как ручной
+    эндпоинт); уже готовый анализ перезапуску не мешает — requeue встречи
+    осознанно даёт новую версию."""
+    label = settings.auto_analyze
+    if not label or provider is None:
+        return
+    try:
+        templates = [t for t in templates_store.list_templates(conn) if t["enabled"]]
+        if label == "auto":
+            result = transcripts.get(conn, job_id)
+            if result is None:
+                _log.warning("Авто-анализ job %s: нет транскрипта в БД", job_id)
+                return
+            head = "\n".join(s.text.strip() for s in result.segments
+                             if s.text.strip())[:analyze.CLASSIFY_HEAD_CHARS]
+            # То же правило VRAM, что у анализа: LLM — только после выгрузки
+            # Whisper (дальше анализ выгрузит повторно, это безвредно).
+            try:
+                engine.unload()
+            except Exception:
+                pass
+            label = analyze.classify_meeting(provider, head, templates)
+            if not label:
+                _log.info("Авто-анализ job %s: тип встречи не определён, "
+                          "анализ не ставим", job_id)
+                return
+        tpl = next((t for t in templates if t["label"] == label), None)
+        if tpl is None:
+            _log.warning("Авто-анализ job %s: шаблон «%s» недоступен", job_id, label)
+            return
+        if analyses.has_active(conn, job_id, label):
+            return
+        aid = analyses.enqueue(conn, job_id, tpl["label"], tpl["display_name"],
+                               tpl["prompt_body"], config.LLM_MODEL)
+        _log.info("Авто-анализ job %s: поставлен анализ «%s» (id=%s)",
+                  job_id, label, aid)
+    except Exception as e:
+        _log.warning("Авто-анализ job %s не удался: %s", job_id, e)
+
+
 def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
                 formats: list[str], tmp_dir: str, output_dir: str,
-                inbox_dir: str | None = None, processed_dir: str | None = None) -> None:
+                inbox_dir: str | None = None, processed_dir: str | None = None,
+                provider=None) -> None:
     job_id = job_row["id"]
     override = json.loads(job_row["settings_json"] or "{}")
     settings = merge_settings(settings_global, override)
@@ -127,6 +175,9 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
         dst = move_to_processed(job_row["source_path"], inbox_dir, processed_dir)
         if dst:
             job_queue.update(conn, job_id, processed_path=dst)
+        # Авто-анализ (если включён): сам встанет в очередь анализов, worker
+        # подберёт её на следующем тике — GPU-работы сериализуются сами собой.
+        maybe_auto_analyze(conn, engine, provider, job_id, settings)
     except job_queue.JobCancelled:
         job_queue.update(conn, job_id, status="cancelled", stage="", progress=0.0, error="")
         broker.publish(job_id, "", 0.0, "cancelled")
@@ -282,7 +333,8 @@ class Worker:
                             settings_global=self.settings_provider(),
                             formats=self.formats_provider(),
                             tmp_dir=self.tmp_dir, output_dir=self.output_dir,
-                            inbox_dir=self.inbox_dir, processed_dir=self.processed_dir)
+                            inbox_dir=self.inbox_dir, processed_dir=self.processed_dir,
+                            provider=self.provider)
                 # Простой отсчитывается с момента, когда очередь ОПУСТЕЛА, а не с
                 # момента, когда работа была взята: расшифровка часового видео
                 # длится дольше порога простоя сама по себе, и если отметить

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Транскрибатор встреч</title>
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
 <div class="app">
@@ -72,6 +72,10 @@
           <div class="field"><label>Форматы вывода</label>
             <div class="fmts" id="fmts"></div>
             <div class="hint" id="fmt-hint" style="margin-top:7px"></div>
+          </div>
+          <div class="field"><label>Анализ после расшифровки</label>
+            <select class="input" id="auto-analyze" style="min-height:40px"></select>
+            <div class="hint" id="auto-analyze-hint" style="margin-top:7px"></div>
           </div>
           <div class="panel-foot">
             <span class="hint" id="settings-summary"></span>
@@ -151,6 +155,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>
