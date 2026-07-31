@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 
-from app import analyses, analyze, config, ffmpeg_tool, job_queue, speakers, writers
+from app import analyses, analyze, config, ffmpeg_tool, job_queue, speakers, transcripts, writers
 from app.models import Settings, TranscriptResult
 
 _log = logging.getLogger(__name__)
@@ -110,6 +110,10 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
 
         result = engine.transcribe(wav, settings, report)
 
+        # БД — источник истины: транскрипт пишем сюда первым делом, файлы
+        # ниже — best-effort копии (тот же принцип, что result_md анализов).
+        transcripts.save(conn, job_id, result)
+
         report("write", 0.95)
         basename = os.path.splitext(job_row["filename"])[0]
         writers.write_all(result, job_out, formats, basename)
@@ -118,7 +122,11 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
                          stage="write", output_dir=job_out)
         broker.publish(job_id, "write", 1.0, "done")
         # Успех: уносим исходник из inbox в processed, чтобы не транскрибировать повторно.
-        move_to_processed(job_row["source_path"], inbox_dir, processed_dir)
+        # Фактическое расположение запоминаем: source_path после переноса мёртв,
+        # а обратиться к файлу нужно (тултип в UI, плеер).
+        dst = move_to_processed(job_row["source_path"], inbox_dir, processed_dir)
+        if dst:
+            job_queue.update(conn, job_id, processed_path=dst)
     except job_queue.JobCancelled:
         job_queue.update(conn, job_id, status="cancelled", stage="", progress=0.0, error="")
         broker.publish(job_id, "", 0.0, "cancelled")
@@ -136,7 +144,8 @@ def process_job(conn, broker, engine, job_row, *, settings_global: Settings,
 
 def process_analysis(conn, broker, engine, provider, row, *, settings_global: Settings,
                      output_dir: str) -> None:
-    """Один анализ: транскрипт с диска → LLM → markdown в БД и на диск.
+    """Один анализ: транскрипт из БД (fallback — с диска) → LLM → markdown в БД
+    и на диск.
 
     Порядок выгрузок обязателен: Whisper уходит из VRAM ДО первого вызова LLM
     (14B рядом с large-v3 не помещается), Ollama освобождает карту ПОСЛЕ."""
@@ -153,21 +162,25 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
             raise analyze.AnalyzeError("встреча не найдена")
         job_out = job["output_dir"] or os.path.join(output_dir, str(job_id))
         basename = os.path.splitext(job["filename"])[0]
-        json_path = os.path.join(job_out, f"{basename}.json")
-        if not os.path.isfile(json_path):
-            raise analyze.AnalyzeError(f"нет файла транскрипта: {json_path}")
-        with open(json_path, encoding="utf-8") as f:
-            raw = f.read()
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            # Отдельный перехват: json.JSONDecodeError.__str__ — английский текст
-            # ("Expecting value: line 1 column 1..."), а тексты ошибок в проекте
-            # по-русски и должны быть понятны не разработчику, а пользователю.
-            raise analyze.AnalyzeError(
-                f"файл транскрипта повреждён: {json_path} — расшифруйте встречу заново"
-            ) from e
-        result = TranscriptResult.from_dict(data)
+        # Транскрипт — из БД (источник истины); файл на диске — fallback для
+        # записей, созданных до появления таблицы transcripts.
+        result = transcripts.get(conn, job_id)
+        if result is None:
+            json_path = os.path.join(job_out, f"{basename}.json")
+            if not os.path.isfile(json_path):
+                raise analyze.AnalyzeError(f"нет файла транскрипта: {json_path}")
+            with open(json_path, encoding="utf-8") as f:
+                raw = f.read()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                # Отдельный перехват: json.JSONDecodeError.__str__ — английский текст
+                # ("Expecting value: line 1 column 1..."), а тексты ошибок в проекте
+                # по-русски и должны быть понятны не разработчику, а пользователю.
+                raise analyze.AnalyzeError(
+                    f"файл транскрипта повреждён: {json_path} — расшифруйте встречу заново"
+                ) from e
+            result = TranscriptResult.from_dict(data)
         # Имена/объединения спикеров применяются на входе анализа: реплики
         # уходят в LLM уже как «Роман: …», а не «Спикер 1: …». Алиасы
         # фиксируются на момент выполнения — готовый result_md дальше не
@@ -188,6 +201,7 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
         analyses.update(conn, analysis_id, status="done", progress=1.0,
                         stage="reduce", result_md=md)
         broker.publish(job_id, "reduce", 1.0, "done", analysis_id=analysis_id)
+        transcripts.index_analysis(conn, analysis_id, job_id, md)
 
         # На диске — последняя версия по метке (удобство); история версий живёт
         # в БД. Best-effort, как move_to_processed и provider.unload() ниже.

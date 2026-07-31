@@ -16,7 +16,7 @@ if ($args.Count -ge 1) { $port = [int]$args[0] }
 
 if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
     Write-Host "Сервер уже запущен — откройте http://127.0.0.1:$port" -ForegroundColor Green
-    Write-Host "(Второй экземпляр не нужен; чтобы перезапустить — Обновить.bat или перезагрузка.)"
+    Write-Host "(Второй экземпляр не нужен; чтобы перезапустить — Перезапустить.bat.)"
     exit 0
 }
 

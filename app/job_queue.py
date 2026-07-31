@@ -4,6 +4,8 @@ import os
 import sqlite3
 import threading
 
+from app import transcripts
+
 
 def enqueue(conn: sqlite3.Connection, source_path: str, settings_json: str) -> int:
     filename = os.path.basename(source_path)
@@ -45,10 +47,11 @@ def claim_next(conn: sqlite3.Connection) -> sqlite3.Row | None:
 
 
 def update(conn: sqlite3.Connection, job_id: int, *, status=None, progress=None,
-           stage=None, error=None, output_dir=None) -> None:
+           stage=None, error=None, output_dir=None, processed_path=None) -> None:
     fields, values = [], []
     for name, val in (("status", status), ("progress", progress), ("stage", stage),
-                      ("error", error), ("output_dir", output_dir)):
+                      ("error", error), ("output_dir", output_dir),
+                      ("processed_path", processed_path)):
         if val is not None:
             fields.append(f"{name}=?")
             values.append(val)
@@ -57,6 +60,26 @@ def update(conn: sqlite3.Connection, job_id: int, *, status=None, progress=None,
     values.append(job_id)
     conn.execute(f"UPDATE jobs SET {', '.join(fields)} WHERE id=?", values)
     conn.commit()
+
+
+def backfill_processed_paths(conn: sqlite3.Connection, processed_dir: str) -> int:
+    """Дозаполняет processed_path для старых встреч: если исходника по
+    source_path уже нет, а в processed/ лежит файл с тем же именем — это он.
+    Подпапки inbox не разбираем (редкий случай, угадать подпуть нельзя)."""
+    rows = conn.execute(
+        "SELECT id, source_path, filename FROM jobs "
+        "WHERE processed_path IS NULL AND status='done'").fetchall()
+    fixed = 0
+    for row in rows:
+        if os.path.isfile(row["source_path"]):
+            continue   # файл на месте (MOVE_PROCESSED=false или добавлен по пути)
+        candidate = os.path.join(processed_dir, row["filename"])
+        if os.path.isfile(candidate):
+            conn.execute("UPDATE jobs SET processed_path=? WHERE id=?",
+                         (candidate, row["id"]))
+            fixed += 1
+    conn.commit()
+    return fixed
 
 
 def get(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
@@ -111,5 +134,6 @@ def delete(conn: sqlite3.Connection, job_id: int) -> None:
     с purge=true."""
     conn.execute("DELETE FROM analyses WHERE job_id=?", (job_id,))
     conn.execute("DELETE FROM speaker_aliases WHERE job_id=?", (job_id,))
+    transcripts.purge_job(conn, job_id)
     conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
     conn.commit()

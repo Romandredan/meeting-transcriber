@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Транскрибатор встреч</title>
-  <link rel="stylesheet" href="/static/style.css?v=8">
+  <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 <div class="app">
@@ -90,6 +90,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="color-mix(in srgb,var(--color-text) 50%,transparent)" stroke-width="1.5"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
           <input class="input" id="query" placeholder="Поиск по названию встречи">
         </div>
+        <div class="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="color-mix(in srgb,var(--color-text) 50%,transparent)" stroke-width="1.5"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+          <input class="input" id="gquery" placeholder="Поиск по всем транскриптам и анализам">
+        </div>
         <div class="seg" id="filters">
           <span class="seg-opt on" data-filter="all">Все</span>
           <span class="seg-opt" data-filter="work">В работе</span>
@@ -147,6 +151,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="/static/app.js?v=8"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

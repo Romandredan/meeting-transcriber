@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from app import analyses, config, db, job_queue, llm, templates_store
+from app import analyses, config, db, job_queue, llm, templates_store, transcripts
 from app.api import create_app
 from app.engine.factory import make_engine
 from app.progress import ProgressBroker
@@ -14,6 +14,16 @@ from app.worker import Worker
 config.ensure_dirs()
 conn = db.connect(config.DB_PATH)
 db.init_schema(conn)
+# Бэкфилл транскриптов в БД для встреч, расшифрованных до появления
+# таблицы transcripts (из JSON-файлов на диске). Идемпотентно: заполняет
+# только отсутствующие.
+bf_filled, bf_skipped = transcripts.backfill(conn)
+if bf_filled or bf_skipped:
+    print(f"Транскрипты перенесены в БД: {bf_filled}, пропущено: {bf_skipped}")
+# Дозаполняем processed_path для встреч, обработанных до появления колонки.
+pp_fixed = job_queue.backfill_processed_paths(conn, str(config.PROCESSED_DIR))
+if pp_fixed:
+    print(f"Восстановлено расположение исходников в processed/: {pp_fixed}")
 recovered = job_queue.recover_stuck(conn)
 if recovered:
     print(f"Восстановлено зависших job'ов: {recovered}")

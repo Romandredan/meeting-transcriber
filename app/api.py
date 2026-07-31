@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import analyses, config, job_queue, llm, speakers, templates_store
+from app import analyses, config, job_queue, llm, speakers, templates_store, transcripts
 from app.models import Settings, TranscriptResult
 from app.stitch import merge_speaker_runs
 from app.watcher import is_media
@@ -286,7 +286,10 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         row = job_queue.get(conn, job_id)
         if row is None:
             raise HTTPException(404, "встреча не найдена")
-        result = speakers.apply_view(_load_result(row), speakers.get_aliases(conn, job_id))
+        # Транскрипт — из БД (источник истины); файл на диске — fallback для
+        # встреч, расшифрованных до появления таблицы transcripts.
+        result = transcripts.get(conn, job_id) or _load_result(row)
+        result = speakers.apply_view(result, speakers.get_aliases(conn, job_id))
         # Панель показывает те же склеенные реплики, что TXT/MD/DOCX и вход
         # анализа (merge_speaker_runs с MERGE_MAX_SECONDS): сырые секундные
         # сегменты Whisper читать мучительно, а второй формат текста заводить
@@ -325,7 +328,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         row = job_queue.get(conn, job_id)
         if row is None:
             raise HTTPException(404, "встреча не найдена")
-        result = _load_result(row)
+        result = transcripts.get(conn, job_id) or _load_result(row)
         if not result.diarized:
             return {"speakers": []}
         aliases = speakers.get_aliases(conn, job_id)
@@ -346,7 +349,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         row = job_queue.get(conn, job_id)
         if row is None:
             raise HTTPException(404, "встреча не найдена")
-        result = _load_result(row)
+        result = transcripts.get(conn, job_id) or _load_result(row)
         known = speakers.raw_speakers(result)
         aliases = {a.label: {"name": a.name, "merged_into": a.merged_into}
                    for a in body.aliases}
@@ -354,9 +357,25 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         if error:
             raise HTTPException(400, f"Имена спикеров не сохранены: {error}")
         speakers.set_aliases(conn, job_id, aliases)
+        # Поисковый индекс хранит отображаемые метки — переиндексируем,
+        # чтобы поиск по имени находил реплики этого человека.
+        transcripts.index_replicas(conn, job_id, result)
         base = os.path.splitext(row["filename"])[0]
         speakers.rerender_outputs(result, row["output_dir"], base, aliases)
         return {"ok": True}
+
+    @app.get("/api/search")
+    def global_search(q: str = "", limit: int = 50, all: bool = False):
+        """Полнотекстовый поиск по репликам всех встреч и результатам анализов
+        (FTS5, при недоступности — LIKE-перебор).
+
+        Лимиты по видам: реплики — limit, анализы — 20 (all=true снимает оба
+        до разумного потолка). total — полные счётчики совпадений, чтобы UI
+        показывал «показано X из Y»."""
+        hits, totals = transcripts.search(
+            conn, q, limit=500 if all else limit,
+            analysis_limit=200 if all else 20)
+        return {"hits": hits, "total": totals}
 
     @app.get("/api/jobs/{job_id}/files")
     def job_files(job_id: int):
@@ -427,7 +446,10 @@ def create_app(conn, broker, settings_state) -> FastAPI:
                     400, f"анализ этой встречи по шаблону «{tpl['label']}» уже в очереди")
             job_out = job["output_dir"] or ""
             basename = os.path.splitext(job["filename"])[0]
-            if not os.path.isfile(os.path.join(job_out, f"{basename}.json")):
+            # Транскрипт может жить только в БД (файл почистили) — это не
+            # повод отказывать: источник истины — transcripts, диск лишь копия.
+            if (transcripts.get(conn, job_id) is None
+                    and not os.path.isfile(os.path.join(job_out, f"{basename}.json"))):
                 raise HTTPException(400, "нет файла транскрипта — расшифруйте встречу заново")
             aid = analyses.enqueue(conn, job_id, tpl["label"], tpl["display_name"],
                                    tpl["prompt_body"], config.LLM_MODEL)
@@ -456,6 +478,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         @app.delete("/api/analyses/{analysis_id}")
         def delete_analysis(analysis_id: int):
             analyses.delete(conn, analysis_id)
+            transcripts.delete_analysis_rows(conn, analysis_id)
             return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)

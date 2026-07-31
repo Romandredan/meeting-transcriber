@@ -72,3 +72,34 @@ def test_init_schema_is_idempotent(tmp_path):
     conn.commit()
     db.init_schema(conn)
     assert conn.execute("SELECT COUNT(*) c FROM templates").fetchone()["c"] == 1
+
+
+def test_jobs_have_processed_path_column(tmp_path):
+    """Миграция 3: колонка processed_path есть и в новой, и в старой БД."""
+    conn = make_conn(tmp_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
+    assert "processed_path" in cols
+    # Старая БД (только базовая схема, user_version=0) догоняется миграцией.
+    import sqlite3 as _sq
+    old = _sq.connect(str(tmp_path / "old.db"))
+    old.executescript(db.SCHEMA)
+    old.commit()
+    db.init_schema(old)
+    cols = [r[1] for r in old.execute("PRAGMA table_info(jobs)")]
+    assert "processed_path" in cols
+
+
+def test_backfill_processed_paths(tmp_path):
+    conn = make_conn(tmp_path)
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "a.mp4").write_bytes(b"x")
+    moved = job_queue.enqueue(conn, str(tmp_path / "inbox" / "a.mp4"), "{}")  # источника нет
+    job_queue.update(conn, moved, status="done")
+    alive = tmp_path / "b.mp4"; alive.write_bytes(b"x")                        # источник на месте
+    kept = job_queue.enqueue(conn, str(alive), "{}")
+    job_queue.update(conn, kept, status="done")
+
+    assert job_queue.backfill_processed_paths(conn, str(processed)) == 1
+    assert job_queue.get(conn, moved)["processed_path"] == str(processed / "a.mp4")
+    assert job_queue.get(conn, kept)["processed_path"] is None

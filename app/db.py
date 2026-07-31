@@ -92,8 +92,49 @@ def _m001_speaker_aliases(conn: sqlite3.Connection) -> None:
         )""")
 
 
+def _m002_transcripts_fts(conn: sqlite3.Connection) -> None:
+    # Транскрипты в БД (источник истины; output/*.json — best-effort копия) и
+    # полнотекстовый индекс по репликам и анализам. Сегменты храним без words:
+    # детализация по словам нужна только файлу на диске, а в БД раздувала бы
+    # каждую встречу в разы.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS transcripts (
+            job_id        INTEGER PRIMARY KEY,
+            language      TEXT NOT NULL DEFAULT '',
+            duration      REAL NOT NULL DEFAULT 0,
+            model         TEXT NOT NULL DEFAULT '',
+            diarized      INTEGER NOT NULL DEFAULT 0,
+            segments_json TEXT NOT NULL
+        )""")
+    try:
+        # kind: 'replica' (ref_id — номер реплики, start — таймкод) или
+        # 'analysis' (ref_id — id анализа). speaker/text — индексируемые поля.
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+                kind UNINDEXED, job_id UNINDEXED, ref_id UNINDEXED,
+                start UNINDEXED, speaker, text,
+                tokenize='unicode61'
+            )""")
+    except sqlite3.OperationalError:
+        # FTS5 не собран в этом SQLite (экзотическая сборка Python) — поиск
+        # деградирует на LIKE-перебор, остальное работает как обычно.
+        log.warning("FTS5 недоступен в этой сборке SQLite — "
+                    "поиск будет работать в режиме LIKE")
+
+
+def _m003_jobs_processed_path(conn: sqlite3.Connection) -> None:
+    # Фактическое расположение исходника после move_to_processed: source_path
+    # в inbox после успешной расшифровки мёртв, а обратиться к файлу нужно
+    # (тултип в UI, эндпоинт /media для плеера).
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
+    if "processed_path" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN processed_path TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "таблица speaker_aliases — имена и объединения спикеров", _m001_speaker_aliases),
+    (2, "transcripts в БД + FTS5-индекс поиска", _m002_transcripts_fts),
+    (3, "jobs.processed_path — фактическое расположение исходника", _m003_jobs_processed_path),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

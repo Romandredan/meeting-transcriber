@@ -39,6 +39,9 @@ const S = {
   tq: new Map(),              // jobId → строка поиска по репликам
   an: new Map(),              // jobId → { list, pick, ver }
   spk: new Map(),             // jobId → { open, rows: [{label, …, name, merged_into}] } — черновик панели имён
+  gq: "",                     // строка глобального поиска по транскриптам и анализам
+  gres: null,                 // результаты глобального поиска (null — не искали)
+  pendingScroll: null,        // { job, start } — прокрутить к реплике после загрузки транскрипта
   eta: new Map(),             // jobId → { t0, p0 } для оценки остатка
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
@@ -370,8 +373,7 @@ function statusText(job) {
   return bits.join(" · ");
 }
 
-function jobSig(job) {
-  const meta = S.meta.get(job.id);
+function jobSig(job) {  const meta = S.meta.get(job.id);
   const files = S.files.get(job.id);
   const an = S.an.get(job.id);
   // Статусы анализов — в сигнатуре: переход queued → processing → done не меняет
@@ -455,7 +457,7 @@ function rowHtml(job) {
   }
 
   return `<div class="job-name ${job.status === "cancelled" ? "off" : ""}">
-      ${dotHtml(job)}<span class="text" title="${esc(job.source_path || job.filename)}">${esc(job.filename)}</span>
+      ${dotHtml(job)}<span class="text" title="${esc(job.processed_path || job.source_path || job.filename)}">${esc(job.filename)}</span>
     </div>
     <div class="job-mid">
       <div class="row" style="flex-wrap:wrap;align-items:flex-start;gap:8px">
@@ -469,8 +471,94 @@ function rowHtml(job) {
     <div class="job-actions">${actions}</div>`;
 }
 
+/* ─────────────────────── глобальный поиск ─────────────────────── */
+
+let gTimer = null;
+function searchSoon() {
+  clearTimeout(gTimer);
+  if (!S.gq.trim()) { S.gres = null; renderQueue(); return; }
+  gTimer = setTimeout(runGlobalSearch, 300);
+}
+
+async function runGlobalSearch(showAll) {
+  const q = S.gq.trim();
+  if (!q) return;
+  const url = "/api/search?q=" + encodeURIComponent(q) + (showAll ? "&all=1" : "");
+  try { S.gres = await api(url); S.gres.showAll = !!showAll; }
+  catch (e) { S.gres = { error: e.message }; }
+  if (S.gq.trim()) renderQueue();   // запрос могли уже очистить — не лезем
+}
+
+// Маркеры [совпадение] из сниппета сервера → <mark> (после esc, XSS нет).
+function markSnippet(s) {
+  return esc(s).replace(/\[/g, "<mark>").replace(/\]/g, "</mark>");
+}
+
+function renderSearchResults(list) {
+  const res = S.gres;
+  if (!res) { list.innerHTML = `<div class="queue-empty">Ищем…</div>`; return; }
+  if (res.error) {
+    list.innerHTML = `<div class="queue-empty">Поиск не удался: ${esc(res.error)}</div>`;
+    return;
+  }
+  const hits = res.hits || [];
+  const total = (res.total && (res.total.analysis + res.total.replica)) || 0;
+  if (!hits.length) {
+    list.innerHTML = `<div class="queue-empty">По запросу «${esc(S.gq.trim())}» ничего не найдено — ни в репликах, ни в анализах.</div>`;
+    return;
+  }
+  // Группируем по встречам (от новых к старым — id растут со временем),
+  // внутри встречи — сначала анализы, потом реплики. Так находки одной
+  // встречи держатся вместе, и до реплик не надо крутить через все анализы.
+  const byJob = new Map();
+  for (const r of hits) {
+    if (!byJob.has(r.job_id)) byJob.set(r.job_id, []);
+    byJob.get(r.job_id).push(r);
+  }
+  const groups = [...byJob.entries()].sort((a, b) => b[0] - a[0]);
+  const lineHtml = (r) => `<div class="g-line g-hit" data-job="${r.job_id}" data-kind="${r.kind}" data-start="${r.start || 0}">
+      <span class="g-kind ${r.kind === "analysis" ? "tag tag-accent" : ""}">${r.kind === "analysis"
+        ? "Анализ"
+        : esc(r.speaker || "реплика") + (r.start ? " · " + tc(r.start) : "")}</span>
+      <span class="g-snippet">${markSnippet(r.snippet)}</span>
+    </div>`;
+  const hidden = total - hits.length;
+  const countText = hidden > 0
+    ? `Показано: ${hits.length} из ${total} · встреч: ${groups.length}`
+    : `Найдено: ${hits.length} · встреч: ${groups.length}`;
+  list.innerHTML = `<div class="g-head"><span class="hint">${countText}</span>
+      <span class="row" style="gap:4px">
+        ${hidden > 0 && !res.showAll ? `<button class="btn btn-ghost" data-act="gall" type="button">Показать все (${total})</button>` : ""}
+        <button class="btn btn-ghost" data-act="gclear" type="button">Очистить поиск</button>
+      </span></div>`
+    + groups.map(([jid, rows]) => {
+      const job = S.jobs.find((j) => j.id === jid);
+      const analyses = rows.filter((r) => r.kind === "analysis");
+      const replicas = rows.filter((r) => r.kind !== "analysis");
+      return `<div class="job g-meeting">
+        <div class="job-row clickable g-meeting-head" data-job="${jid}">
+          <div class="job-name">
+            <span class="dot dot-neutral"></span>
+            <span class="text" title="${esc(rows[0].filename)}">${esc(rows[0].filename)}</span>
+          </div>
+          <div class="job-mid"><span class="hint">${job ? dateText(job.created_at) : ""}</span></div>
+        </div>
+        <div class="g-lines">${analyses.map(lineHtml).join("")}${replicas.map(lineHtml).join("")}</div>
+      </div>`;
+    }).join("");
+}
+
+function clearGlobalSearch() {
+  S.gq = "";
+  S.gres = null;
+  const gi = $("#gquery");
+  if (gi) gi.value = "";
+  renderQueue();
+}
+
 function renderQueue() {
   const list = $("#queue-list");
+  if (S.gq.trim()) { renderSearchResults(list); return; }
   const visible = visibleJobs();
   if (!visible.length) {
     list.innerHTML = `<div class="queue-empty">${S.query.trim()
@@ -567,7 +655,9 @@ function openJob(id) {
 }
 
 async function loadTranscript(jobId) {
-  if (S.transcripts.has(jobId) || S.inflight.has("t" + jobId)) return;
+  // Уже в кэше — прокрутку к реплике (если пришли из поиска) делаем сразу.
+  if (S.transcripts.has(jobId)) { scrollToPendingReplica(jobId); return; }
+  if (S.inflight.has("t" + jobId)) return;   // долетит — прокрутит finally
   S.inflight.add("t" + jobId);
   try {
     const t = await api(`/api/jobs/${jobId}/transcript`);
@@ -578,7 +668,28 @@ async function loadTranscript(jobId) {
   } finally {
     S.inflight.delete("t" + jobId);
     if (S.open === jobId) renderTranscriptCol(jobId);
+    scrollToPendingReplica(jobId);
   }
+}
+
+// Позиционирование на реплике из глобального поиска: транскрипт только что
+// загружен — ищем абзац, в чей интервал попадает таймкод результата, и
+// подводим к нему список с короткой подсветкой-вспышкой.
+function scrollToPendingReplica(jobId) {
+  const pend = S.pendingScroll;
+  if (!pend || pend.job !== jobId) return;
+  S.pendingScroll = null;
+  const t = S.transcripts.get(jobId);
+  const box = $(`#segs-${jobId}`);
+  if (!t || t.error || !box) return;
+  const segs = t.segments || [];
+  let idx = segs.findIndex((s) => pend.start < s.end);
+  if (idx === -1) idx = segs.length - 1;
+  const el = box.querySelector(`[data-idx="${idx}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.classList.add("seg-flash");
+  setTimeout(() => el.classList.remove("seg-flash"), 2600);
 }
 
 function renderTranscriptCol(jobId) {
@@ -748,9 +859,11 @@ function renderSegs(jobId) {
     return;
   }
   const all = t.segments || [];
-  const shown = q ? all.filter((s) => (s.text || "").toLowerCase().includes(q) || (s.speaker || "").toLowerCase().includes(q)) : all;
+  const shown = q
+    ? all.map((s, i) => [s, i]).filter(([s]) => (s.text || "").toLowerCase().includes(q) || (s.speaker || "").toLowerCase().includes(q))
+    : all.map((s, i) => [s, i]);
   cnt.textContent = q ? "найдено " + shown.length + " из " + all.length : all.length + " реплик";
-  box.innerHTML = shown.slice(0, 1500).map((s) => `<div class="seg-line">
+  box.innerHTML = shown.slice(0, 1500).map(([s, i]) => `<div class="seg-line" data-idx="${i}">
       <span class="seg-t">${tc(s.start)}</span>
       <div style="min-width:0;display:flex;flex-direction:column;gap:2px">
         ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
@@ -1010,6 +1123,14 @@ document.addEventListener("click", async (ev) => {
   if (a) {
     const id = Number(a.dataset.id);
     switch (a.dataset.act) {
+      case "gclear":
+        ev.stopPropagation();
+        clearGlobalSearch();
+        return;
+      case "gall":
+        ev.stopPropagation();
+        runGlobalSearch(true);
+        return;
       case "upload-dismiss":
         ev.stopPropagation();
         S.uploads = S.uploads.filter((u) => u.key !== Number(a.dataset.key));
@@ -1138,6 +1259,32 @@ document.addEventListener("click", async (ev) => {
     renderQueue();
     return;
   }
+  // Заголовок встречи в выдаче поиска: просто раскрыть карточку (без прокрутки
+  // к реплике). Поймать до generic-обработчика .job-row — у блока нет data-id.
+  const mhead = ev.target.closest(".g-meeting-head");
+  if (mhead) {
+    const jid = Number(mhead.dataset.job);
+    clearGlobalSearch();
+    openJob(jid);
+    const w = document.querySelector(`.job[data-id="${jid}"]`);
+    if (w) w.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  // Результат глобального поиска: открываем встречу, поиск очищаем — иначе
+  // раскрытой карточки не видно за списком результатов. Для реплики запоминаем
+  // таймкод: после загрузки транскрипта прокрутим список к ней.
+  const hit = ev.target.closest(".g-hit");
+  if (hit) {
+    const jid = Number(hit.dataset.job);
+    const start = Number(hit.dataset.start || 0);
+    if (hit.dataset.kind === "replica") S.pendingScroll = { job: jid, start };
+    clearGlobalSearch();
+    openJob(jid);
+    // Карточка может быть за пределами экрана — подводим страницу к ней.
+    const w = document.querySelector(`.job[data-id="${jid}"]`);
+    if (w) w.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
   const row = ev.target.closest(".job-row");
   if (row) { openJob(Number(row.closest(".job").dataset.id)); return; }
 });
@@ -1145,6 +1292,7 @@ document.addEventListener("click", async (ev) => {
 document.addEventListener("input", (ev) => {
   const t = ev.target;
   if (t.id === "query") { S.query = t.value; renderQueue(); return; }
+  if (t.id === "gquery") { S.gq = t.value; searchSoon(); return; }
   if (t.id === "language") { S.settings.language = t.value.trim() || null; saveSettingsSoon(); renderSettingsInputs(); return; }
   if (t.id === "speakers") { Object.assign(S.settings, inputToSpeakers(t.value)); saveSettingsSoon(); return; }
   if (t.id === "vocab") { S.settings.vocabulary = t.value; saveSettingsSoon(); renderSettingsInputs(); return; }

@@ -249,6 +249,12 @@ select.input { appearance: none; padding-right: 26px; }
 .seg-sp { font-family: var(--font-heading); font-weight: 600; font-size: 14px; letter-spacing: .04em; }
 .seg-text { font-size: 14px; line-height: 1.65; color: color-mix(in srgb, var(--color-text) 85%, transparent); text-wrap: pretty; }
 .seg-text mark { background: color-mix(in srgb, var(--color-accent) 35%, transparent); color: inherit; }
+/* Подсветка-вспышка реплики, к которой прокрутили из глобального поиска. */
+.seg-flash { animation: segflash 2.6s ease-out; border-radius: 4px; }
+@keyframes segflash {
+  0%, 60% { background: color-mix(in srgb, var(--color-accent) 22%, transparent); }
+  100% { background: transparent; }
+}
 
 /* Панель «Имена спикеров»: в потоке колонки транскрипции, в той же
    чертёжной стилистике — тонкая рамка, без теней и всплытия. */
@@ -292,6 +298,25 @@ select.input option { background: var(--color-surface); color: var(--color-text)
 .run-bar > .track { width: 120px; height: 4px; position: relative; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
 .run-bar > .track > i { position: absolute; inset: 0; background: var(--color-accent); animation: pulse 1.4s ease-in-out infinite; }
 .queue-empty { padding: 34px 22px; text-align: center; font-size: 14px; color: var(--color-muted); }
+
+/* Глобальный поиск: результаты подменяют список очереди, пока запрос не очищен. */
+.g-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 22px; border-bottom: 1px solid var(--color-hairline);
+}
+.g-snippet { font-size: 14px; line-height: 1.6; color: color-mix(in srgb, var(--color-text) 85%, transparent); }
+.g-lines { display: flex; flex-direction: column; padding: 4px 22px 12px 34px; }
+.g-line {
+  display: flex; gap: 12px; align-items: baseline; padding: 7px 0;
+  border-top: 1px solid var(--color-hairline); cursor: pointer;
+}
+.g-line:first-child { border-top: 0; }
+.g-line:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent); }
+.g-kind { flex: none; min-width: 130px; font-size: 12.5px; color: var(--color-muted); }
+.g-kind.tag { min-width: 0; }
+.g-meeting-head .job-name .text { font-weight: 500; }
+.g-hit mark { background: color-mix(in srgb, var(--color-accent) 35%, transparent); color: inherit; }
+.dot-neutral { background: color-mix(in srgb, var(--color-text) 35%, transparent); }
 
 /* ── экран «Словарь и шаблоны» ───────────────────────────────────────────── */
 .set-row { display: grid; grid-template-columns: 190px 1fr; border-bottom: 1px solid var(--color-divider); }

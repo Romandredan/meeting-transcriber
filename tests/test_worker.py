@@ -72,6 +72,25 @@ def test_process_job_writes_outputs_and_marks_done(tmp_path, monkeypatch):
     assert done["output_dir"]
 
 
+def test_process_job_moves_source_and_records_processed_path(tmp_path, monkeypatch):
+    """После успеха исходник уезжает в processed/, а его новое расположение
+    пишется в jobs.processed_path (source_path после переноса мёртв)."""
+    conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
+    monkeypatch.setattr(worker.ffmpeg_tool, "extract_audio", lambda src, dst: open(dst, "w").close())
+    inbox = tmp_path / "inbox"; inbox.mkdir()
+    src = inbox / "a.mp4"; src.write_bytes(b"x")
+    jid = job_queue.enqueue(conn, str(src), "{}")
+    row = job_queue.claim_next(conn)
+    worker.process_job(conn, ProgressBroker(), FakeEngine(), row,
+                       settings_global=Settings(), formats=["txt"],
+                       tmp_dir=str(tmp_path / "tmp"), output_dir=str(tmp_path / "out"),
+                       inbox_dir=str(inbox), processed_dir=str(tmp_path / "processed"))
+    done = job_queue.get(conn, jid)
+    assert done["status"] == "done"
+    assert done["processed_path"] == str(tmp_path / "processed" / "a.mp4")
+    assert not src.exists()   # исходника в inbox больше нет
+
+
 def test_process_job_marks_error_on_ffmpeg_failure(tmp_path, monkeypatch):
     conn = db.connect(tmp_path / "t.db"); db.init_schema(conn)
     def boom(src, dst): raise worker.ffmpeg_tool.FFmpegError("нет аудио")
