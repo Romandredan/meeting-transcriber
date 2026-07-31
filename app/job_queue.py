@@ -110,5 +110,6 @@ def delete(conn: sqlite3.Connection, job_id: int) -> None:
     списке — только представление. Чистку диска делает отдельный вызов из API
     с purge=true."""
     conn.execute("DELETE FROM analyses WHERE job_id=?", (job_id,))
+    conn.execute("DELETE FROM speaker_aliases WHERE job_id=?", (job_id,))
     conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
     conn.commit()

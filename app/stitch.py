@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 from app.models import Segment, Word
@@ -58,10 +59,17 @@ def segment_speaker(words: list[Word]) -> str | None:
     return max(totals, key=totals.get)
 
 
+# Метки pyannote имеют вид SPEAKER_00 — только их и «очеловечиваем». Всё
+# остальное (уже готовые «Спикер N», имена из speaker_aliases, в т.ч. с цифрами
+# вроде «CFO2») возвращаем как есть: humanize обязан быть идемпотентным,
+# потому что по конвейеру метка может проходить через него дважды.
+_RAW_LABEL_RE = re.compile(r"^[A-Z]+_?\d+$")
+
+
 def humanize_speaker(label: str | None) -> str:
     if not label:
         return "Спикер ?"
-    digits = "".join(ch for ch in label if ch.isdigit())
-    if digits == "":
+    if not _RAW_LABEL_RE.match(label):
         return label
+    digits = "".join(ch for ch in label if ch.isdigit())
     return f"Спикер {int(digits) + 1}"

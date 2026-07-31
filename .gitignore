@@ -20,3 +20,6 @@ docs/ideas/
 docs/plan-easy-install.md
 # Прежняя версия фронтенда, оставлена локально на всякий случай
 web/_old/
+
+# Артефакты playwright MCP (скриншоты, снапшоты страниц)
+.playwright-mcp/

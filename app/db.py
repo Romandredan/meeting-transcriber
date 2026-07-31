@@ -78,7 +78,22 @@ def init_schema(conn: sqlite3.Connection) -> None:
 # - версия = PRAGMA user_version после применения; версии строго монотонны.
 Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
 
+
+def _m001_speaker_aliases(conn: sqlite3.Connection) -> None:
+    # Алиасы и слияния спикеров: speaker — человеческая метка («Спикер 1»),
+    # name — отображаемое имя, merged_into — метка спикера, с которым объединён.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS speaker_aliases (
+            job_id      INTEGER NOT NULL,
+            speaker     TEXT NOT NULL,
+            name        TEXT NOT NULL DEFAULT '',
+            merged_into TEXT,
+            PRIMARY KEY (job_id, speaker)
+        )""")
+
+
 MIGRATIONS: list[Migration] = [
+    (1, "таблица speaker_aliases — имена и объединения спикеров", _m001_speaker_aliases),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

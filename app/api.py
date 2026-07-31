@@ -15,8 +15,9 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import analyses, config, job_queue, llm, templates_store
-from app.models import Settings
+from app import analyses, config, job_queue, llm, speakers, templates_store
+from app.models import Settings, TranscriptResult
+from app.stitch import merge_speaker_runs
 from app.watcher import is_media
 
 WEB_DIR = config.BASE_DIR / "web"
@@ -55,6 +56,31 @@ class TemplateIn(BaseModel):
 
 class AnalysisIn(BaseModel):
     label: str
+
+
+class SpeakerAliasIn(BaseModel):
+    label: str
+    name: str = ""
+    merged_into: str | None = None
+
+
+class SpeakersIn(BaseModel):
+    aliases: list[SpeakerAliasIn]
+
+
+def _load_result(row) -> TranscriptResult:
+    """Сырой TranscriptResult из {basename}.json в output/<id>/.
+
+    HTTPException с русским текстом — показывается пользователю как есть."""
+    if not row["output_dir"]:
+        raise HTTPException(404, "расшифровка недоступна")
+    base = os.path.splitext(row["filename"])[0]
+    path = os.path.join(row["output_dir"], f"{base}.json")
+    if not os.path.isfile(path):
+        raise HTTPException(404, "нет файла транскрипта — формат JSON был выключен")
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return TranscriptResult.from_dict(data)
 
 
 def create_app(conn, broker, settings_state) -> FastAPI:
@@ -251,27 +277,34 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         """Расшифровка для панели «Транскрипция» — читается с диска, из того же
         {basename}.json, что потом уходит в анализ.
 
+        Спикеры отдаются с применёнными алиасами (слияние → имя): панель видит
+        то же, что попадёт в анализ и перегенерированные файлы. Сырые метки
+        остаются только в JSON на диске.
+
         meta=true — только сводка (язык, длительность, модель, спикеры, число
         реплик): список /api/jobs её не несёт, а строке очереди она нужна."""
         row = job_queue.get(conn, job_id)
         if row is None:
             raise HTTPException(404, "встреча не найдена")
-        if not row["output_dir"]:
-            raise HTTPException(404, "расшифровка недоступна")
-        base = os.path.splitext(row["filename"])[0]
-        path = os.path.join(row["output_dir"], f"{base}.json")
-        if not os.path.isfile(path):
-            raise HTTPException(404, "нет файла транскрипта — формат JSON был выключен")
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        segments = data.get("segments", [])
-        speakers = sorted({s.get("speaker") for s in segments if s.get("speaker")})
+        result = speakers.apply_view(_load_result(row), speakers.get_aliases(conn, job_id))
+        # Панель показывает те же склеенные реплики, что TXT/MD/DOCX и вход
+        # анализа (merge_speaker_runs с MERGE_MAX_SECONDS): сырые секундные
+        # сегменты Whisper читать мучительно, а второй формат текста заводить
+        # не надо — иначе представления со временем разъедутся.
+        segments = (merge_speaker_runs(result.segments, max_seconds=config.MERGE_MAX_SECONDS)
+                    if result.diarized else result.segments)
+        # Итоговый список спикеров — в порядке первого появления в записи
+        # (после слияний их может стать меньше, чем нашла диаризация).
+        seen: dict[str, None] = {}
+        for s in segments:
+            if s.speaker:
+                seen.setdefault(s.speaker)
         out = {
-            "language": data.get("language", ""),
-            "duration": data.get("duration", 0.0),
-            "model": data.get("model", ""),
-            "diarized": bool(data.get("diarized", False)),
-            "speakers": speakers,
+            "language": result.language,
+            "duration": result.duration,
+            "model": result.model,
+            "diarized": result.diarized,
+            "speakers": list(seen),
             "count": len(segments),
         }
         if meta:
@@ -279,12 +312,51 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         # Слова не отдаём: панели нужны только реплики, а words раздувают ответ
         # часовой встречи в десятки мегабайт.
         out["segments"] = [
-            {"start": s.get("start", 0.0), "end": s.get("end", 0.0),
-             "text": s.get("text", ""), "speaker": s.get("speaker")}
+            {"start": s.start, "end": s.end, "text": s.text, "speaker": s.speaker}
             for s in segments[:limit]
         ]
         out["truncated"] = len(segments) > limit
         return out
+
+    @app.get("/api/jobs/{job_id}/speakers")
+    def get_speakers(job_id: int):
+        """Строки панели «Указать имена»: сырые метки + статистика для
+        идентификации (число реплик, время речи, превью) + текущие алиасы."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        result = _load_result(row)
+        if not result.diarized:
+            return {"speakers": []}
+        aliases = speakers.get_aliases(conn, job_id)
+        rows = []
+        for st in speakers.speaker_stats(result):
+            info = aliases.get(st["label"]) or {}
+            rows.append({**st, "seconds": round(st["seconds"]),
+                         "name": info.get("name") or "",
+                         "merged_into": info.get("merged_into")})
+        return {"speakers": rows}
+
+    @app.put("/api/jobs/{job_id}/speakers")
+    def put_speakers(job_id: int, body: SpeakersIn):
+        """Сохраняет имена/объединения спикеров и перегенерирует читаемые файлы.
+
+        Алиасы — истина в БД; перегенерация TXT/SRT/VTT/MD/DOCX — best-effort
+        (сбой записи файла не отменяет сохранение)."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        result = _load_result(row)
+        known = speakers.raw_speakers(result)
+        aliases = {a.label: {"name": a.name, "merged_into": a.merged_into}
+                   for a in body.aliases}
+        error = speakers.validate_aliases(aliases, known)
+        if error:
+            raise HTTPException(400, f"Имена спикеров не сохранены: {error}")
+        speakers.set_aliases(conn, job_id, aliases)
+        base = os.path.splitext(row["filename"])[0]
+        speakers.rerender_outputs(result, row["output_dir"], base, aliases)
+        return {"ok": True}
 
     @app.get("/api/jobs/{job_id}/files")
     def job_files(job_id: int):

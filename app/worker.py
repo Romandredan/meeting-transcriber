@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 
-from app import analyses, analyze, config, ffmpeg_tool, job_queue, writers
+from app import analyses, analyze, config, ffmpeg_tool, job_queue, speakers, writers
 from app.models import Settings, TranscriptResult
 
 _log = logging.getLogger(__name__)
@@ -168,6 +168,11 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
                 f"файл транскрипта повреждён: {json_path} — расшифруйте встречу заново"
             ) from e
         result = TranscriptResult.from_dict(data)
+        # Имена/объединения спикеров применяются на входе анализа: реплики
+        # уходят в LLM уже как «Роман: …», а не «Спикер 1: …». Алиасы
+        # фиксируются на момент выполнения — готовый result_md дальше не
+        # меняется (снимок, как и prompt_snapshot).
+        result = speakers.apply_view(result, speakers.get_aliases(conn, job_id))
 
         report("unload", 0.02)
         engine.unload()   # освобождаем VRAM под LLM

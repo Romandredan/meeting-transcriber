@@ -38,6 +38,7 @@ const S = {
   transcripts: new Map(),     // jobId → { segments, … }
   tq: new Map(),              // jobId → строка поиска по репликам
   an: new Map(),              // jobId → { list, pick, ver }
+  spk: new Map(),             // jobId → { open, rows: [{label, …, name, merged_into}] } — черновик панели имён
   eta: new Map(),             // jobId → { t0, p0 } для оценки остатка
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
@@ -595,8 +596,10 @@ function renderTranscriptCol(jobId) {
     col.innerHTML = `<div class="detail-head">
         <span class="detail-title">Транскрипция</span>
         <span class="detail-meta" id="tmeta-${jobId}"></span>
+        <span id="tspk-${jobId}"></span>
         <div class="detail-links" id="tlinks-${jobId}"></div>
       </div>
+      <div id="spkhost-${jobId}"></div>
       <div class="detail-bar">
         <div class="search" style="flex:1;min-width:0">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="color-mix(in srgb,var(--color-text) 50%,transparent)" stroke-width="1.5" style="top:11px"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
@@ -611,7 +614,112 @@ function renderTranscriptCol(jobId) {
   }
   $(`#tmeta-${jobId}`).textContent = meta;
   $(`#tlinks-${jobId}`).innerHTML = links;
+  // Кнопка «Имена спикеров» — только когда есть кого подписывать.
+  const canName = t && !t.error && t.diarized && (t.speakers || []).length > 0;
+  $(`#tspk-${jobId}`).innerHTML = canName
+    ? `<button class="btn btn-ghost" data-act="spk-toggle" data-id="${jobId}" type="button">Имена спикеров</button>` : "";
+  renderSpeakerPanel(jobId);
   renderSegs(jobId);
+}
+
+/* ─────────────────────── имена спикеров ─────────────────────── */
+
+async function loadSpeakers(jobId) {
+  try {
+    const data = await api(`/api/jobs/${jobId}/speakers`);
+    const st = S.spk.get(jobId) || { open: false, rows: [] };
+    // Черновик правок не затираем, если панель уже открыта и редактируется.
+    if (!st.open || !st.rows.length) {
+      st.rows = (data.speakers || []).map((r) => ({
+        label: r.label, utterances: r.utterances, seconds: r.seconds,
+        preview: r.preview, name: r.name || "", merged_into: r.merged_into || "",
+      }));
+    }
+    S.spk.set(jobId, st);
+  } catch (e) {
+    toast("Не удалось загрузить спикеров: " + e.message);
+    S.spk.delete(jobId);
+  }
+  if (S.open === jobId) renderSpeakerPanel(jobId);
+}
+
+function renderSpeakerPanel(jobId) {
+  const host = $(`#spkhost-${jobId}`);
+  if (!host) return;
+  const st = S.spk.get(jobId);
+  if (!st || !st.open) {
+    if (host.dataset.spksig) { host.innerHTML = ""; host.dataset.spksig = ""; }
+    return;
+  }
+  // Сигнатура — только структура (метки и слияния): вводимые имена в неё не
+  // входят, иначе перерисовка по опросу каждые 5 с выбивала бы фокус из поля.
+  const sig = st.rows.map((r) => r.label + ">" + (r.merged_into || "")).join(",");
+  if (host.dataset.spksig === sig) return;
+  host.dataset.spksig = sig;
+
+  if (!st.rows.length) {
+    host.innerHTML = `<div class="spk-panel"><div class="hint">Загружаем спикеров…</div></div>`;
+    return;
+  }
+  const labels = st.rows.map((r) => r.label);
+  const rowsHtml = st.rows.map((r) => {
+    const merged = !!r.merged_into;
+    const opts = labels.filter((l) => l !== r.label).map((l) =>
+      `<option value="${esc(l)}" ${r.merged_into === l ? "selected" : ""}>объединить с «${esc(l)}»</option>`).join("");
+    return `<div class="spk-row ${merged ? "merged" : ""}">
+      <div class="spk-who">
+        <div class="spk-label">${esc(r.label)}${merged ? ` → ${esc(r.merged_into)}` : ""}</div>
+        <div class="hint">${r.utterances} реплик · ${durText(r.seconds)}</div>
+        ${r.preview ? `<div class="hint spk-preview">«${esc(r.preview)}»</div>` : ""}
+      </div>
+      <input class="input spk-name" data-id="${jobId}" data-label="${esc(r.label)}"
+             value="${esc(r.name)}" placeholder="Имя (например, Роман)" ${merged ? "disabled" : ""}>
+      <select class="input spk-merge" data-id="${jobId}" data-label="${esc(r.label)}">
+        <option value="">не объединять</option>${opts}
+      </select>
+    </div>`;
+  }).join("");
+
+  host.innerHTML = `<div class="spk-panel">
+    <div class="spk-head">
+      <span class="detail-title">Имена и объединение спикеров</span>
+      <span class="hint">Кто есть кто: у каждого спикера — число реплик, время речи и первая фраза. Если диаризация раздвоила одного человека — объедините его метки.</span>
+    </div>
+    ${rowsHtml}
+    <div class="spk-foot">
+      <span class="hint">После сохранения файлы TXT/MD/DOCX и субтитры пересоберутся с именами; новые анализы тоже увидят имена. Уже готовые анализы — снимок: перегенерируйте при желании.</span>
+      <div class="row" style="flex:none">
+        <button class="btn btn-ghost" data-act="spk-cancel" data-id="${jobId}" type="button">Отмена</button>
+        <button class="btn btn-primary" data-act="spk-save" data-id="${jobId}" type="button">Сохранить</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveSpeakers(jobId) {
+  const st = S.spk.get(jobId);
+  if (!st) return;
+  const aliases = st.rows
+    .filter((r) => r.name.trim() || r.merged_into)
+    .map((r) => ({ label: r.label, name: r.name.trim(), merged_into: r.merged_into || null }));
+  try {
+    await api(`/api/jobs/${jobId}/speakers`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aliases }),
+    });
+  } catch (e) { toast(e.message); return; }
+  toast("Имена спикеров сохранены");
+  // Транскрипт и мета теперь другие (имена, число спикеров) — сбрасываем кэши
+  // и сигнатуру списка реплик: число реплик не изменилось, и без сброса rsig
+  // renderSegs пропустит перерисовку, оставив старые метки на экране.
+  S.spk.delete(jobId);
+  S.transcripts.delete(jobId);
+  S.meta.delete(jobId);
+  const box = $(`#segs-${jobId}`);
+  if (box) delete box.dataset.rsig;
+  renderSpeakerPanel(jobId);
+  loadTranscript(jobId);
+  refreshJobs();
 }
 
 function highlight(text, q) {
@@ -931,6 +1039,23 @@ document.addEventListener("click", async (ev) => {
         refreshJobs();
         return;
       case "run": ev.stopPropagation(); runAnalysis(id); return;
+      case "spk-toggle": {
+        ev.stopPropagation();
+        const st = S.spk.get(id) || { open: false, rows: [] };
+        st.open = !st.open;
+        S.spk.set(id, st);
+        if (st.open) loadSpeakers(id); else renderSpeakerPanel(id);
+        return;
+      }
+      case "spk-save": ev.stopPropagation(); saveSpeakers(id); return;
+      case "spk-cancel": {
+        ev.stopPropagation();
+        // Отмена = закрыть и забыть черновик: при следующем открытии панель
+        // заново прочитает сохранённые алиасы с сервера.
+        S.spk.delete(id);
+        renderSpeakerPanel(id);
+        return;
+      }
       case "copy": {
         ev.preventDefault(); ev.stopPropagation();
         const st = analysisState(id);
@@ -1024,11 +1149,28 @@ document.addEventListener("input", (ev) => {
   if (t.id === "speakers") { Object.assign(S.settings, inputToSpeakers(t.value)); saveSettingsSoon(); return; }
   if (t.id === "vocab") { S.settings.vocabulary = t.value; saveSettingsSoon(); renderSettingsInputs(); return; }
   if (t.dataset.act === "tq") { S.tq.set(Number(t.dataset.id), t.value); renderSegs(Number(t.dataset.id)); return; }
+  if (t.classList.contains("spk-name")) {
+    // Правим только модель, без перерисовки — иначе фокус выбьет на каждой букве.
+    const st = S.spk.get(Number(t.dataset.id));
+    const row = st && st.rows.find((r) => r.label === t.dataset.label);
+    if (row) row.name = t.value;
+    return;
+  }
   if (t.dataset.form && S.form) { S.form[t.dataset.form] = t.value; return; }
 });
 
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.classList.contains("spk-merge")) {
+    const st = S.spk.get(Number(t.dataset.id));
+    const row = st && st.rows.find((r) => r.label === t.dataset.label);
+    if (row) {
+      row.merged_into = t.value;
+      if (t.value) row.name = "";   // имя берётся у целевого спикера
+      renderSpeakerPanel(Number(t.dataset.id));   // перерисовать: поле имени выключается
+    }
+    return;
+  }
   if (t.dataset.act === "pick-label") {
     const id = Number(t.dataset.id);
     const st = S.an.get(id) || { list: [], ver: 0 };
