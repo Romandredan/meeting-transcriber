@@ -44,7 +44,7 @@
 .\install.ps1
 ```
 
-Линтер и форматтер **не настроены** — держись стиля окружающего кода. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml) — pytest на windows-latest, матрица Python 3.10–3.13, только `requirements-base.txt` (ML-импорты в `app/` ленивые, в CI не нужны). Триггеры: push в `main`, PR, и `workflow_call` из [.github/workflows/release.yml](.github/workflows/release.yml) — тесты там гейт релиза (`needs: test`): пуш тега `v*` → тесты → zip снимка репозитория (`git archive`) → GitHub-релиз. Заметки релиза берутся из аннотации тега (`--notes-from-tag`), поэтому тег создаём только аннотированным: `git tag -a v1.x.x -m "…"`. Локальный прогон pytest перед сдачей обязателен в любом случае.
+Линтер и форматтер **не настроены** — держись стиля окружающего кода. CI: [.github/workflows/ci.yml](.github/workflows/ci.yml) — pytest на windows-latest, матрица Python 3.10–3.13, только `requirements-base.txt` (ML-импорты в `app/` ленивые, в CI не нужны). Триггеры: push в `main`, PR, и `workflow_call` из [.github/workflows/release.yml](.github/workflows/release.yml) — тесты там гейт релиза (`needs: test`): пуш тега `v*` → тесты → zip снимка репозитория (`git archive`) → GitHub-релиз. Заметки релиза берутся из аннотации тега (`--notes-from-tag`), поэтому: (1) тег создаём только аннотированным — `git tag -a v1.x.x -m "…"`; (2) в тексте аннотации **не начинаем строки с `#`** — git cleanup вырезает такие строки как комментарии, заголовки делаем жирным текстом. Локальный прогон pytest перед сдачей обязателен в любом случае.
 
 ## Архитектура
 

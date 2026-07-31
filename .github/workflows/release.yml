@@ -22,6 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # --notes-from-tag читает аннотацию тега из локального git — без
+          # полного fetch объекта тега нет, и заметки молча деградируют до
+          # сообщения коммита (поймано на v1.6.0).
+          fetch-depth: 0
 
       - name: Собрать zip-архив
         run: |
