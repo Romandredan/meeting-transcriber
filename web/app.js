@@ -1108,6 +1108,10 @@ function renderAnalysisCol(jobId) {
     ${!S.llm.ok ? `<div class="hint">${esc(S.llm.error || "Ollama недоступна")} — анализ пока запустить нельзя.</div>` : ""}
     ${verNav ? `<div class="row" style="gap:10px">${verNav}</div>` : ""}
     ${body}`;
+  // Текстариа правки — по высоте содержимого (с потолком 70vh), а не фиксированные
+  // несколько строк: протокол на 200 строк иначе редактируется через крошечное окошко.
+  const ta = $(`#anedit-${a.current ? a.current.id : 0}`, col);
+  if (ta) ta.style.height = Math.min(ta.scrollHeight + 4, window.innerHeight * 0.7) + "px";
 }
 
 async function runAnalysis(jobId) {
@@ -1437,6 +1441,12 @@ document.addEventListener("input", (ev) => {
     const st = S.spk.get(Number(t.dataset.id));
     const row = st && st.rows.find((r) => r.label === t.dataset.label);
     if (row) row.name = t.value;
+    return;
+  }
+  if (t.classList.contains("md-edit")) {
+    // Авторост по мере ввода (до 70vh; ручная подгонка — resize: vertical).
+    t.style.height = "auto";
+    t.style.height = Math.min(t.scrollHeight + 4, window.innerHeight * 0.7) + "px";
     return;
   }
   if (t.dataset.form && S.form) { S.form[t.dataset.form] = t.value; return; }

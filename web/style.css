@@ -295,6 +295,7 @@ select.input option { background: var(--color-surface); color: var(--color-text)
 .md-edit {
   width: 100%; min-height: 320px; resize: vertical;
   font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+  overflow-y: auto;
 }
 .empty-note {
   display: flex; flex-direction: column; gap: 8px; padding: 22px 0; align-items: center;
