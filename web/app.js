@@ -761,6 +761,14 @@ function scrollToPendingReplica(jobId) {
   const segs = t.segments || [];
   let idx = segs.findIndex((s) => pend.start < s.end);
   if (idx === -1) idx = segs.length - 1;
+  // Сплошная догрузка по прокрутке могла не дойти до нужной реплики —
+  // дорисовываем хвост, пока она не появится в DOM.
+  let guard = 0;
+  while (!box.querySelector(`[data-idx="${idx}"]`) && guard++ < 50) {
+    const before = box.dataset.limit;
+    onSegScroll(jobId);
+    if (box.dataset.limit === before) break;
+  }
   const el = box.querySelector(`[data-idx="${idx}"]`);
   if (!el) return;
   el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -916,6 +924,48 @@ function highlight(text, q) {
   return esc(text.slice(0, i)) + "<mark>" + esc(text.slice(i, i + q.length)) + "</mark>" + esc(text.slice(i + q.length));
 }
 
+const SEG_CHUNK = 500;
+
+function segLineHtml(jobId, s, i, q) {
+  if (S.segEdit && S.segEdit.job === jobId && S.segEdit.idx === i) {
+    return `<div class="seg-line" data-idx="${i}">
+      <span class="seg-t">${tc(s.start)}</span>
+      <div style="min-width:0;display:flex;flex-direction:column;gap:6px;flex:1">
+        ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
+        <textarea class="input seg-edit-ta" id="segedit-${jobId}">${esc(s.text || "")}</textarea>
+        <div class="row" style="gap:6px;justify-content:flex-end">
+          <button class="btn btn-ghost" data-act="seg-cancel" data-id="${jobId}" type="button">Отмена</button>
+          <button class="btn btn-primary" data-act="seg-save" data-id="${jobId}" data-idx="${i}" type="button">Сохранить</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  return `<div class="seg-line" data-idx="${i}">
+    <span class="seg-t">${tc(s.start)}</span>
+    <div style="min-width:0;display:flex;flex-direction:column;gap:2px">
+      ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
+      <span class="seg-text editable" data-id="${jobId}" data-idx="${i}" title="Нажмите, чтобы исправить текст реплики">${highlight(s.text || "", q)}</span>
+    </div>
+  </div>`;
+}
+
+function shownSegs(jobId) {
+  const t = S.transcripts.get(jobId);
+  const all = (t && t.segments) || [];
+  const q = (S.tq.get(jobId) || "").trim().toLowerCase();
+  const shown = q
+    ? all.map((s, i) => [s, i]).filter(([s]) => (s.text || "").toLowerCase().includes(q) || (s.speaker || "").toLowerCase().includes(q))
+    : all.map((s, i) => [s, i]);
+  return { shown, total: all.length, q };
+}
+
+function updateSegCount(jobId, shownLen, rendered, q, total) {
+  const cnt = $(`#tcount-${jobId}`);
+  if (!cnt) return;
+  const base = q ? `найдено ${shownLen} из ${total}` : `${shownLen} реплик`;
+  cnt.textContent = rendered < shownLen ? `показано ${rendered} из ${shownLen} — крутите ниже` : base;
+}
+
 function renderSegs(jobId) {
   const box = $(`#segs-${jobId}`), cnt = $(`#tcount-${jobId}`);
   if (!box) return;
@@ -935,33 +985,30 @@ function renderSegs(jobId) {
     cnt.textContent = "";
     return;
   }
-  const all = t.segments || [];
-  const shown = q
-    ? all.map((s, i) => [s, i]).filter(([s]) => (s.text || "").toLowerCase().includes(q) || (s.speaker || "").toLowerCase().includes(q))
-    : all.map((s, i) => [s, i]);
-  cnt.textContent = q ? "найдено " + shown.length + " из " + all.length : all.length + " реплик";
-  box.innerHTML = shown.slice(0, 1500).map(([s, i]) => {
-    if (S.segEdit && S.segEdit.job === jobId && S.segEdit.idx === i) {
-      return `<div class="seg-line" data-idx="${i}">
-        <span class="seg-t">${tc(s.start)}</span>
-        <div style="min-width:0;display:flex;flex-direction:column;gap:6px;flex:1">
-          ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
-          <textarea class="input seg-edit-ta" id="segedit-${jobId}">${esc(s.text || "")}</textarea>
-          <div class="row" style="gap:6px;justify-content:flex-end">
-            <button class="btn btn-ghost" data-act="seg-cancel" data-id="${jobId}" type="button">Отмена</button>
-            <button class="btn btn-primary" data-act="seg-save" data-id="${jobId}" data-idx="${i}" type="button">Сохранить</button>
-          </div>
-        </div>
-      </div>`;
-    }
-    return `<div class="seg-line" data-idx="${i}">
-      <span class="seg-t">${tc(s.start)}</span>
-      <div style="min-width:0;display:flex;flex-direction:column;gap:2px">
-        ${s.speaker ? `<span class="seg-sp">${esc(s.speaker)}</span>` : ""}
-        <span class="seg-text editable" data-id="${jobId}" data-idx="${i}" title="Нажмите, чтобы исправить текст реплики">${highlight(s.text || "", q)}</span>
-      </div>
-    </div>`;
-  }).join("") || `<div class="hint">Ничего не найдено в репликах.</div>`;
+  const { shown, total } = shownSegs(jobId);
+  // Рендерим первую порцию, остальное дорисовывается по мере прокрутки —
+  // раньше стояла молчаливая обрезка на 1500, и хвост длинной встречи просто
+  // не существовал для пользователя.
+  const limit = Math.min(SEG_CHUNK, shown.length);
+  box.innerHTML = shown.slice(0, limit).map(([s, i]) => segLineHtml(jobId, s, i, q)).join("")
+    || `<div class="hint">Ничего не найдено в репликах.</div>`;
+  box.dataset.limit = limit;
+  updateSegCount(jobId, shown.length, limit, q, total);
+  box.onscroll = () => onSegScroll(jobId);
+}
+
+function onSegScroll(jobId) {
+  const box = $(`#segs-${jobId}`);
+  if (!box || box.scrollTop + box.clientHeight < box.scrollHeight - 300) return;
+  const limit = Number(box.dataset.limit || SEG_CHUNK);
+  const { shown, total, q } = shownSegs(jobId);
+  if (limit >= shown.length) return;
+  const next = Math.min(limit + SEG_CHUNK, shown.length);
+  // Дорисовка хвоста без пересборки: существующие узлы (и прокрутка) не трогаем.
+  box.insertAdjacentHTML("beforeend",
+    shown.slice(limit, next).map(([s, i]) => segLineHtml(jobId, s, i, q)).join(""));
+  box.dataset.limit = next;
+  updateSegCount(jobId, shown.length, next, q, total);
 }
 
 /* ─────────────────────── правка реплики ─────────────────────── */
