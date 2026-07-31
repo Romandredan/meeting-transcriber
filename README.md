@@ -210,6 +210,7 @@ inbox/ ──watcher──> очередь (SQLite) ──worker──> ffmpeg �
 | `GET /api/llm/health` | доступна ли Ollama и загружена ли модель |
 | `GET` / `POST /api/templates`, `PUT` / `DELETE /api/templates/{id}` | CRUD шаблонов анализа¹ |
 | `POST` / `GET /api/jobs/{id}/analyses` | запустить анализ / список анализов встречи¹ |
+| `POST /api/analyses/{id}/cancel` | отменить анализ в очереди или в работе¹ |
 | `PUT /api/analyses/{id}` | сохранить ручную правку результата (версия помечается «изменено вручную»)¹ |
 | `PATCH /api/jobs/{id}/transcript` | исправить текст реплики (БД + переиндексация поиска + пересборка файлов) |
 | `GET /api/analyses/{id}/download` | скачать результат анализа (`.md`)¹ |

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 
 def enqueue(conn: sqlite3.Connection, job_id: int, label: str, display_name: str,
@@ -86,3 +87,29 @@ def recover_stuck(conn: sqlite3.Connection) -> int:
     )
     conn.commit()
     return cur.rowcount
+
+
+class AnalysisCancelled(Exception):
+    """Пользователь отменил анализ — не ошибка обработки."""
+
+
+# Отмена «на лету» — как у job'ов (job_queue): очередь в БД, флаг в памяти
+# процесса. После перезапуска сервера отменять нечего (recover_stuck вернёт
+# зависшее 'processing' в очередь).
+_cancel_requests: set[int] = set()
+_cancel_lock = threading.Lock()
+
+
+def request_cancel(analysis_id: int) -> None:
+    with _cancel_lock:
+        _cancel_requests.add(int(analysis_id))
+
+
+def cancel_requested(analysis_id: int) -> bool:
+    with _cancel_lock:
+        return int(analysis_id) in _cancel_requests
+
+
+def clear_cancel(analysis_id: int) -> None:
+    with _cancel_lock:
+        _cancel_requests.discard(int(analysis_id))

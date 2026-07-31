@@ -539,6 +539,24 @@ def create_app(conn, broker, settings_state) -> FastAPI:
             transcripts.index_analysis(conn, analysis_id, row["job_id"], text)
             return {"ok": True}
 
+        @app.post("/api/analyses/{analysis_id}/cancel")
+        def cancel_analysis(analysis_id: int):
+            """Отмена анализа (полезно при мисклике). В очереди — мгновенно,
+            в работе — кооперативно: worker остановится на ближайшей стадии."""
+            row = analyses.get(conn, analysis_id)
+            if row is None:
+                raise HTTPException(404, "анализ не найден")
+            if row["status"] == "queued":
+                analyses.update(conn, analysis_id, status="cancelled",
+                                stage="", progress=0.0, error="")
+                broker.publish(row["job_id"], "", 0.0, "cancelled",
+                               analysis_id=analysis_id)
+                return {"ok": True, "status": "cancelled"}
+            if row["status"] == "processing":
+                analyses.request_cancel(analysis_id)
+                return {"ok": True, "status": "cancelling"}
+            raise HTTPException(400, "отменять можно только анализ в очереди или в работе")
+
         @app.delete("/api/analyses/{analysis_id}")
         def delete_analysis(analysis_id: int):
             analyses.delete(conn, analysis_id)

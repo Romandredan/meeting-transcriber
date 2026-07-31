@@ -204,6 +204,11 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
     job_id = row["job_id"]
 
     def report(stage: str, progress: float) -> None:
+        # Отмена проверяется здесь — report единственная точка, которую
+        # конвейер дёргает по ходу работы (как у job'ов): срабатывает на
+        # ближайшей стадии (unload → map i/n → fold → reduce), не мгновенно.
+        if analyses.cancel_requested(analysis_id):
+            raise analyses.AnalysisCancelled()
         analyses.update(conn, analysis_id, stage=stage, progress=progress)
         broker.publish(job_id, stage, progress, "processing", analysis_id=analysis_id)
 
@@ -264,11 +269,16 @@ def process_analysis(conn, broker, engine, provider, row, *, settings_global: Se
         except Exception as e:
             _log.warning("Не удалось записать .md на диск для анализа %s: %s",
                          analysis_id, e)
+    except analyses.AnalysisCancelled:
+        analyses.update(conn, analysis_id, status="cancelled",
+                        stage="", progress=0.0, error="")
+        broker.publish(job_id, "", 0.0, "cancelled", analysis_id=analysis_id)
     except Exception as e:
         text = str(e) if isinstance(e, analyze.AnalyzeError) else f"{type(e).__name__}: {e}"
         analyses.update(conn, analysis_id, status="error", error=text)
         broker.publish(job_id, "", 0.0, "error", analysis_id=analysis_id)
     finally:
+        analyses.clear_cancel(analysis_id)   # флаг не должен переехать на повтор
         try:
             provider.unload()   # keep_alive=0: карта свободна под следующий Whisper
         except Exception:

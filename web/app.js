@@ -966,8 +966,10 @@ function analysisState(jobId) {
   const active = st.list.find((a) => a.label === label && (a.status === "queued" || a.status === "processing"));
   const failed = !active && versions.length === 0
     ? st.list.find((a) => a.label === label && a.status === "error") : null;
+  const cancelled = !active && !failed && versions.length === 0
+    ? st.list.find((a) => a.label === label && a.status === "cancelled") : null;
   const tpl = S.templates.find((t) => t.label === label);
-  return { st, enabled, doneLabels, label, versions, ver, current: versions[ver] || null, active, failed, tpl };
+  return { st, enabled, doneLabels, label, versions, ver, current: versions[ver] || null, active, failed, cancelled, tpl };
 }
 
 // Инлайн-разметка: сначала экранируем HTML, потом подставляем свои теги —
@@ -1046,6 +1048,7 @@ function renderAnalysisCol(jobId) {
     a.current && S.anEdit.has(a.current.id) ? "edit" : "view",
     a.active ? [a.active.id, a.active.stage || "", a.active.progress || 0] : 0,
     a.failed ? a.failed.id : 0,
+    a.cancelled ? a.cancelled.id : 0,
     S.llm.ok, S.llm.error || "",
     a.enabled.map((t) => t.label).join(","), a.doneLabels.join(","),
   ]);
@@ -1068,7 +1071,8 @@ function renderAnalysisCol(jobId) {
   let body;
   if (a.active) {
     body = `<div class="run-bar"><div class="track"><i></i></div>
-      <span class="hint" id="astage-${jobId}">Анализ идёт: ${esc(a.active.stage || "подготовка фрагментов")}</span></div>`;
+      <span class="hint" id="astage-${jobId}">Анализ идёт: ${esc(a.active.stage || "подготовка фрагментов")}</span>
+      <button class="btn btn-ghost" data-act="cancel-analysis" data-id="${a.active.id}" data-job="${jobId}" type="button">Отменить</button></div>`;
   } else if (a.current) {
     if (S.anEdit.has(a.current.id)) {
       body = `<textarea class="input md-edit" id="anedit-${a.current.id}">${esc(a.current.result_md)}</textarea>
@@ -1083,6 +1087,10 @@ function renderAnalysisCol(jobId) {
     body = `<div class="empty-note" style="border-color:color-mix(in srgb,var(--color-danger) 45%,transparent)">
       <div class="empty-title">Анализ не удался</div>
       <div class="hint" style="max-width:360px">${esc(a.failed.error || "причина не записана")}</div></div>`;
+  } else if (a.cancelled) {
+    body = `<div class="empty-note">
+      <div class="empty-title">Анализ отменён вручную</div>
+      <div class="hint" style="max-width:340px">Нажмите «Выполнить анализ», чтобы запустить заново.</div></div>`;
   } else {
     body = `<div class="empty-note">
       <div class="empty-title">Анализ по шаблону «${esc(name)}» не выполнялся</div>
@@ -1299,6 +1307,17 @@ document.addEventListener("click", async (ev) => {
         ev.preventDefault(); ev.stopPropagation();
         if (!confirm("Удалить эту версию анализа?")) return;
         try { await api(`/api/analyses/${id}`, { method: "DELETE" }); } catch (e) { toast(e.message); }
+        loadAnalyses(Number(a.dataset.job));
+        return;
+      }
+      case "cancel-analysis": {
+        ev.stopPropagation();
+        try {
+          const r = await api(`/api/analyses/${id}/cancel`, { method: "POST" });
+          toast(r.status === "cancelling"
+            ? "Отменяем — анализ остановится на ближайшей стадии"
+            : "Анализ снят с очереди");
+        } catch (e) { toast("Не отменено: " + e.message); }
         loadAnalyses(Number(a.dataset.job));
         return;
       }
