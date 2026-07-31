@@ -50,6 +50,7 @@ const S = {
   inflight: new Set(),
   form: null,                 // черновик шаблона: { id, label, name, desc, body, enabled }
   offline: false,
+  confirmKey: null,         // инлайн-подтверждение опасного действия: drop-*, delan-*, tpl-*, regen-*
 };
 
 /* ─────────────────────────── сеть ─────────────────────────── */
@@ -83,6 +84,32 @@ function toast(text) {
   el.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+/* ─────────────── инлайн-подтверждения (без системных confirm) ─────────────── */
+
+let confirmTimer = null;
+function askConfirm(key) {
+  S.confirmKey = key;
+  clearTimeout(confirmTimer);
+  // Забытое подтверждение само сворачивается — не должно висеть вечно.
+  confirmTimer = setTimeout(() => { S.confirmKey = null; rerenderConfirmSites(); }, 7000);
+  rerenderConfirmSites();
+}
+function clearConfirm() {
+  S.confirmKey = null;
+  clearTimeout(confirmTimer);
+}
+function rerenderConfirmSites() {
+  renderQueue();
+  renderTemplates();
+  if (S.open) renderAnalysisCol(S.open);
+}
+// Универсальная разметка «Точно?» вместо кнопки: текст вопроса + варианты.
+function confirmHtml(question, opts) {
+  return `<span class="confirm-inline"><span class="hint">${esc(question)}</span>` +
+    opts.map((o) => `<button class="btn ${o.danger ? "btn-danger" : "btn-ghost"}" data-act="${o.act}" data-id="${o.id}" ${o.job ? `data-job="${o.job}"` : ""} type="button">${esc(o.label)}</button>`).join("") +
+    `</span>`;
 }
 
 /* ─────────────────────────── форматирование ─────────────────────────── */
@@ -291,8 +318,12 @@ function renderTemplates() {
       <span class="tpl-desc">${esc(t.description || "—")}</span>
       <span class="tpl-state" data-act="tpl-toggle" data-id="${t.id}">${t.enabled ? "включён" : "выключен"}</span>
       <div class="tpl-acts">
-        <button class="btn btn-ghost" data-act="tpl-edit" data-id="${t.id}" type="button">${editingId === t.id ? "Свернуть" : "Править"}</button>
-        <button class="btn btn-ghost btn-danger" data-act="tpl-del" data-id="${t.id}" type="button">Удалить</button>
+        ${S.confirmKey === `tpl-${t.id}`
+          ? confirmHtml("Удалить шаблон? Анализы останутся.", [
+              { act: "tpl-del-yes", id: t.id, label: "да", danger: true },
+              { act: "tpl-del-no", id: t.id, label: "нет" }])
+          : `<button class="btn btn-ghost" data-act="tpl-edit" data-id="${t.id}" type="button">${editingId === t.id ? "Свернуть" : "Править"}</button>
+             <button class="btn btn-ghost btn-danger" data-act="tpl-del" data-id="${t.id}" type="button">Удалить</button>`}
       </div>
     </div>`;
     return editingId === t.id ? row + templateFormHtml(true) : row;
@@ -404,7 +435,8 @@ function jobSig(job) {  const meta = S.meta.get(job.id);
   // длину списка, а строка должна перерисоваться (тег «Анализ в очереди»).
   return [job.status, Math.round((job.progress || 0) * 100), job.stage, job.error || "",
     meta ? meta.count : "-", files ? files.join(",") : "-",
-    an ? an.list.map((a) => a.status).join(",") : "-", S.open === job.id ? "open" : "shut"].join("|");
+    an ? an.list.map((a) => a.status).join(",") : "-", S.open === job.id ? "open" : "shut",
+    S.confirmKey === `drop-${job.id}` ? "ask" : ""].join("|");
 }
 
 function dotHtml(job) {
@@ -464,7 +496,13 @@ function rowHtml(job) {
     .map((f) => `<a href="/api/jobs/${job.id}/download/${f}" data-stop="1">${f}</a>`).join("");
 
   let actions = "";
-  if (job.status === "processing") {
+  if (S.confirmKey === `drop-${job.id}`) {
+    actions = confirmHtml("Удалить встречу?", [
+      { act: "drop-yes", id: job.id, label: "из списка" },
+      { act: "drop-purge", id: job.id, label: "и файлы", danger: true },
+      { act: "drop-no", id: job.id, label: "нет" },
+    ]);
+  } else if (job.status === "processing") {
     actions = `<span class="job-eta">${esc(etaText(job))}</span>
       <button class="btn btn-secondary" data-act="cancel" data-id="${job.id}" type="button">Отменить</button>`;
   } else if (job.status === "queued") {
@@ -477,6 +515,7 @@ function rowHtml(job) {
       <button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>`;
   } else {
     actions = links + (files.length ? `<a href="/api/jobs/${job.id}/download_zip" data-stop="1">zip</a>` : "") +
+      `<button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>` +
       `<span class="toggle-text">${isOpen ? "свернуть ▴" : "открыть ▾"}</span>`;
   }
 
@@ -1051,6 +1090,7 @@ function renderAnalysisCol(jobId) {
     a.cancelled ? a.cancelled.id : 0,
     S.llm.ok, S.llm.error || "",
     a.enabled.map((t) => t.label).join(","), a.doneLabels.join(","),
+    S.confirmKey,
   ]);
   if (col.dataset.asig === sig) return;
   col.dataset.asig = sig;
@@ -1102,16 +1142,24 @@ function renderAnalysisCol(jobId) {
       <span class="detail-meta">${esc(headMeta)}</span>
       <div class="detail-links">
         ${a.current && a.current.edited ? `<span class="tag tag-accent" title="Эта версия изменена вручную">изменено вручную</span>` : ""}
-        ${a.current && !S.anEdit.has(a.current.id) ? `<a href="#" data-act="edit-analysis" data-id="${a.current.id}" data-job="${jobId}">Править</a>` : ""}
-        ${a.current ? `<a href="#" data-act="copy" data-id="${jobId}">Скопировать</a>
+        ${a.current && S.confirmKey === `delan-${a.current.id}`
+          ? confirmHtml("Удалить версию?", [
+              { act: "delan-yes", id: a.current.id, label: "да", danger: true, job: jobId },
+              { act: "delan-no", id: a.current.id, label: "нет", job: jobId }])
+          : a.current ? `${!S.anEdit.has(a.current.id) ? `<a href="#" data-act="edit-analysis" data-id="${a.current.id}" data-job="${jobId}">Править</a>` : ""}
+          <a href="#" data-act="copy" data-id="${jobId}">Скопировать</a>
           <a href="/api/analyses/${a.current.id}/download">md</a>
           <a href="#" data-act="del-analysis" data-id="${a.current.id}" data-job="${jobId}" style="color:var(--color-danger-text)">удалить</a>` : ""}
       </div>
     </div>
     <div class="detail-bar">
       <select class="input" style="flex:1;min-width:0;min-height:38px" data-act="pick-label" data-id="${jobId}">${opts || `<option>нет включённых шаблонов</option>`}</select>
-      <button class="btn btn-primary" style="flex:none;min-height:38px" data-act="run" data-id="${jobId}" type="button"
-        ${!S.llm.ok || !a.enabled.length || a.active ? "disabled" : ""}>${a.current ? "Перегенерировать" : "Выполнить анализ"}</button>
+      ${S.confirmKey === `regen-${jobId}`
+        ? confirmHtml("Затрёт ручные правки", [
+            { act: "regen-yes", id: jobId, label: "всё равно", danger: true },
+            { act: "regen-no", id: jobId, label: "отмена" }])
+        : `<button class="btn btn-primary" style="flex:none;min-height:38px" data-act="run" data-id="${jobId}" type="button"
+            ${!S.llm.ok || !a.enabled.length || a.active ? "disabled" : ""}>${a.current ? "Перегенерировать" : "Выполнить анализ"}</button>`}
     </div>
     ${!S.llm.ok ? `<div class="hint">${esc(S.llm.error || "Ollama недоступна")} — анализ пока запустить нельзя.</div>` : ""}
     ${verNav ? `<div class="row" style="gap:10px">${verNav}</div>` : ""}
@@ -1122,11 +1170,11 @@ function renderAnalysisCol(jobId) {
   if (ta) ta.style.height = Math.min(ta.scrollHeight + 4, window.innerHeight * 0.7) + "px";
 }
 
-async function runAnalysis(jobId) {
+async function runAnalysis(jobId, force) {
   const a = analysisState(jobId);
   if (!a.label) { toast("Нет включённых шаблонов анализа"); return; }
-  if (a.current && a.current.edited
-      && !confirm("Перегенерация затрёт ручные правки этой версии. Продолжить?")) return;
+  if (a.current && a.current.edited && !force) { askConfirm(`regen-${jobId}`); return; }
+  clearConfirm();
   try { await api(`/api/jobs/${jobId}/analyses`, jsonBody({ label: a.label })); }
   catch (e) { toast("Анализ не поставлен: " + e.message); return; }
   toast("Анализ поставлен в очередь");
@@ -1270,13 +1318,35 @@ document.addEventListener("click", async (ev) => {
         refreshJobs();
         return;
       case "drop":
-        ev.stopPropagation();        if (!confirm("Убрать встречу из списка? Файлы результата останутся в папке output/.")) return;
-        try { await api(`/api/jobs/${id}`, { method: "DELETE" }); }
+        ev.stopPropagation();
+        askConfirm(`drop-${id}`);
+        return;
+      case "drop-no":
+        ev.stopPropagation();
+        clearConfirm();
+        renderQueue();
+        return;
+      case "drop-yes": case "drop-purge": {
+        ev.stopPropagation();
+        const purge = a.dataset.act === "drop-purge";
+        clearConfirm();
+        try { await api(`/api/jobs/${id}${purge ? "?purge=true" : ""}`, { method: "DELETE" }); }
         catch (e) { toast("Не удалено: " + e.message); }
         if (S.open === id) S.open = null;
+        toast(purge ? "Встреча и файлы результатов удалены" : "Встреча убрана из списка");
         refreshJobs();
         return;
+      }
       case "run": ev.stopPropagation(); runAnalysis(id); return;
+      case "regen-no":
+        ev.stopPropagation();
+        clearConfirm();
+        renderAnalysisCol(id);
+        return;
+      case "regen-yes":
+        ev.stopPropagation();
+        runAnalysis(id, true);
+        return;
       case "spk-toggle": {
         ev.stopPropagation();
         const st = S.spk.get(id) || { open: false, rows: [] };
@@ -1303,9 +1373,18 @@ document.addEventListener("click", async (ev) => {
         }
         return;
       }
-      case "del-analysis": {
+      case "del-analysis":
         ev.preventDefault(); ev.stopPropagation();
-        if (!confirm("Удалить эту версию анализа?")) return;
+        askConfirm(`delan-${id}`);
+        return;
+      case "delan-no":
+        ev.stopPropagation();
+        clearConfirm();
+        renderAnalysisCol(Number(a.dataset.job));
+        return;
+      case "delan-yes": {
+        ev.stopPropagation();
+        clearConfirm();
         try { await api(`/api/analyses/${id}`, { method: "DELETE" }); } catch (e) { toast(e.message); }
         loadAnalyses(Number(a.dataset.job));
         return;
@@ -1374,7 +1453,17 @@ document.addEventListener("click", async (ev) => {
         return;
       }
       case "tpl-del":
-        if (!confirm("Удалить шаблон? Уже сделанные анализы останутся.")) return;
+        ev.stopPropagation();
+        askConfirm(`tpl-${id}`);
+        return;
+      case "tpl-del-no":
+        ev.stopPropagation();
+        clearConfirm();
+        renderTemplates();
+        return;
+      case "tpl-del-yes":
+        ev.stopPropagation();
+        clearConfirm();
         try { await api(`/api/templates/${id}`, { method: "DELETE" }); } catch (e) { toast(e.message); }
         if (S.form && S.form.id === id) S.form = null;
         loadTemplates();
