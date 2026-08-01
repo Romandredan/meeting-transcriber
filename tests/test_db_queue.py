@@ -89,6 +89,31 @@ def test_jobs_have_processed_path_column(tmp_path):
     assert "processed_path" in cols
 
 
+def test_jobs_have_title_column(tmp_path):
+    """Миграция 5: отображаемое название встречи, по умолчанию — пустая строка."""
+    conn = make_conn(tmp_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
+    assert "title" in cols
+    jid = job_queue.enqueue(conn, str(tmp_path / "a.mp4"), "{}")
+    assert job_queue.get(conn, jid)["title"] == ""
+    # Старая БД (только базовая схема, user_version=0) догоняется миграцией.
+    import sqlite3 as _sq
+    old = _sq.connect(str(tmp_path / "old.db"))
+    old.executescript(db.SCHEMA)
+    old.commit()
+    db.init_schema(old)
+    cols = [r[1] for r in old.execute("PRAGMA table_info(jobs)")]
+    assert "title" in cols
+
+
+def test_display_title_falls_back_to_filename(tmp_path):
+    conn = make_conn(tmp_path)
+    jid = job_queue.enqueue(conn, str(tmp_path / "a.mp4"), "{}")
+    assert job_queue.display_title(job_queue.get(conn, jid)) == "a.mp4"
+    job_queue.set_title(conn, jid, "Дейлик по ОРВ")
+    assert job_queue.display_title(job_queue.get(conn, jid)) == "Дейлик по ОРВ"
+
+
 def test_backfill_processed_paths(tmp_path):
     conn = make_conn(tmp_path)
     processed = tmp_path / "processed"

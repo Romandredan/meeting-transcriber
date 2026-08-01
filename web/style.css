@@ -346,6 +346,10 @@ select.input { appearance: none; padding-right: 26px; }
 }
 .job-name span.text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-name.off span.text { opacity: .45; text-decoration: line-through; }
+/* Карандаш правки названия — приглушён, проявляется по наведению на строку. */
+.title-edit-btn { padding: 2px 6px; min-height: 0; font-size: 13px; line-height: 1.2; opacity: .4; }
+.job-name:hover .title-edit-btn, .title-edit-btn:focus-visible { opacity: 1; }
+.title-edit-input { flex: 1; min-width: 0; min-height: 38px; }
 .dot { width: 7px; height: 7px; flex: none; }
 .dot-run { background: var(--color-accent); }
 .dot-queued { border: 1px solid color-mix(in srgb, var(--color-text) 45%, transparent); }

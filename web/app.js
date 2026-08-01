@@ -44,6 +44,7 @@ const S = {
   gres: null,                 // результаты глобального поиска (null — не искали)
   pendingScroll: null,        // { job, start } — прокрутить к реплике после загрузки транскрипта
   segEdit: null,              // { job, idx } — реплика в режиме правки (одна за раз)
+  titleEdit: null,            // id встречи в режиме правки названия (одна за раз; не перерисовывать по опросу!)
   eta: new Map(),             // jobId → { t0, p0 } для оценки остатка
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
@@ -393,7 +394,10 @@ async function refreshJobs() {
 function visibleJobs() {
   const q = S.query.trim().toLowerCase();
   return S.jobs.filter((j) => {
-    if (q && j.filename.toLowerCase().indexOf(q) === -1) return false;
+    // Ищем и по отображаемому названию, и по имени файла: встречу должно
+    // находить и по старому (файловому) имени.
+    if (q && (j.title || j.filename).toLowerCase().indexOf(q) === -1
+        && j.filename.toLowerCase().indexOf(q) === -1) return false;
     if (S.filter === "work") return j.status === "processing" || j.status === "queued";
     if (S.filter === "done") return j.status === "done";
     if (S.filter === "cancelled") return j.status === "cancelled";
@@ -451,9 +455,13 @@ function jobSig(job) {  const meta = S.meta.get(job.id);
   // Статусы анализов — в сигнатуре: переход queued → processing → done не меняет
   // длину списка, а строка должна перерисоваться (тег «Анализ в очереди»).
   return [job.status, Math.round((job.progress || 0) * 100), job.stage, job.error || "",
+    job.title || "",
     meta ? meta.count : "-", files ? files.join(",") : "-",
     an ? an.list.map((a) => a.status).join(",") : "-", S.open === job.id ? "open" : "shut",
-    S.confirmKey === `drop-${job.id}` ? "ask" : ""].join("|");
+    S.confirmKey === `drop-${job.id}` ? "ask" : "",
+    // Маркер режима правки названия — последним: пока он есть, renderQueue
+    // строку не трогает (иначе опрос каждые 5 с выбивал бы фокус из поля).
+    S.titleEdit === job.id ? "tedit" : ""].join("|");
 }
 
 function dotHtml(job) {
@@ -536,8 +544,19 @@ function rowHtml(job) {
       `<button class="btn btn-ghost" data-act="drop" data-id="${job.id}" type="button">Убрать</button>`;
   }
 
+  // Название: отображаемое (title) или имя файла; карандаш — инлайн-правка,
+  // как у реплик. В режиме правки — поле с placeholder'ом из имени файла:
+  // пустое значение при сохранении сбрасывает название обратно к файлу.
+  const nameHtml = S.titleEdit === job.id
+    ? `<input class="input title-edit-input" id="titleedit-${job.id}" data-id="${job.id}"
+         value="${esc(job.title || "")}" placeholder="${esc(job.filename)}" maxlength="200">
+       <button class="btn btn-primary" data-act="title-save" data-id="${job.id}" type="button" style="flex:none;min-height:38px">✓</button>
+       <button class="btn btn-ghost" data-act="title-cancel" data-id="${job.id}" type="button" style="flex:none;min-height:38px">✕</button>`
+    : `<span class="text" title="${esc(job.processed_path || job.source_path || job.filename)}">${esc(job.title || job.filename)}</span>
+       <button class="btn btn-ghost title-edit-btn" data-act="title-edit" data-id="${job.id}" type="button" title="Переименовать встречу">✎</button>`;
+
   return `<div class="job-name ${job.status === "cancelled" ? "off" : ""}">
-      ${dotHtml(job)}<span class="text" title="${esc(job.processed_path || job.source_path || job.filename)}">${esc(job.filename)}</span>
+      ${dotHtml(job)}${nameHtml}
     </div>
     <div class="job-mid">
       <div class="row" style="flex-wrap:wrap;align-items:flex-start;gap:8px">
@@ -658,7 +677,11 @@ function renderQueue() {
       w.innerHTML = `<div class="job-row"></div><div class="job-panel"></div>`;
     }
     const sig = jobSig(job);
-    if (w.dataset.sig !== sig) {
+    // В режиме правки названия строку не перерисовываем: опрос каждые 5 с
+    // иначе выбивал бы фокус и введённый текст. Вход в режим сам меняет sig
+    // маркером tedit — а дальнейшие изменения (прогресс, статусы) игнорируем.
+    const editingTitle = S.titleEdit === job.id && (w.dataset.sig || "").endsWith("|tedit");
+    if (w.dataset.sig !== sig && !editingTitle) {
       const row = $(".job-row", w);
       row.innerHTML = rowHtml(job);
       row.classList.toggle("clickable", job.status === "done");
@@ -1413,6 +1436,43 @@ document.addEventListener("click", async (ev) => {
         refreshJobs();
         return;
       }
+      case "title-edit": {
+        ev.stopPropagation();
+        S.titleEdit = id;
+        renderQueue();
+        const inp = $(`#titleedit-${id}`);
+        if (inp) { inp.focus(); inp.select(); }
+        return;
+      }
+      case "title-cancel":
+        ev.stopPropagation();
+        S.titleEdit = null;
+        renderQueue();
+        return;
+      case "title-save": {
+        ev.stopPropagation();
+        const inp = $(`#titleedit-${id}`);
+        const title = inp ? inp.value.trim() : "";
+        try {
+          await api(`/api/jobs/${id}/title`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title }),
+          });
+          // Обновляем локальную копию, чтобы строка перерисовалась сразу,
+          // не дожидаясь ближайшего опроса списка.
+          const job = S.jobs.find((j) => j.id === id);
+          if (job) job.title = title;
+          toast(title ? "Название сохранено" : "Название сброшено — показываем имя файла");
+        } catch (e) {
+          // Не сохранилось — остаёмся в режиме правки: введённый текст не теряем,
+          // пользователь может повторить (например, после перезапуска сервера).
+          toastError("Не сохранено: " + e.message);
+          return;
+        }
+        S.titleEdit = null;
+        renderQueue();
+        return;
+      }
       case "run": ev.stopPropagation(); runAnalysis(id); return;
       case "regen-no":
         ev.stopPropagation();
@@ -1601,6 +1661,9 @@ document.addEventListener("click", async (ev) => {
     if (w) w.scrollIntoView({ block: "start", behavior: "smooth" });
     return;
   }
+  // Поле правки названия в строке встречи: клики по нему не должны
+  // раскрывать/сворачивать карточку.
+  if (ev.target.closest(".title-edit-input")) return;
   // Клик по тексту реплики — инлайн-правка (таймкод оставлен под плеер).
   const segText = ev.target.closest(".seg-text.editable");
   if (segText) {
@@ -1665,6 +1728,15 @@ document.addEventListener("change", (ev) => {
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && ev.target.id === "path-input") enqueuePath(ev.target.value);
+  // Поле правки названия встречи: Enter — сохранить, Escape — отменить.
+  if (ev.target.classList && ev.target.classList.contains("title-edit-input")) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      const btn = ev.target.parentElement.querySelector('[data-act="title-save"]');
+      if (btn) btn.click();
+    }
+    if (ev.key === "Escape") { S.titleEdit = null; renderQueue(); }
+  }
 });
 
 $("#add-path").onclick = () => enqueuePath($("#path-input").value);

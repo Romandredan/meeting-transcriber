@@ -250,7 +250,8 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 50,
                     rows.append({"kind": "analysis", "job_id": a["job_id"],
                                  "ref_id": a["id"], "start": 0.0, "speaker": "",
                                  "snip": _snippet_around(a["result_md"], tokens[0])})
-    names = {j["id"]: j["filename"] for j in conn.execute("SELECT id, filename FROM jobs")}
+    names = {j["id"]: (j["title"] or j["filename"])
+             for j in conn.execute("SELECT id, filename, title FROM jobs")}
     for r in rows:
         r["filename"] = names.get(r["job_id"], f"#{r['job_id']}")
         r["snippet"] = r.pop("snip", "")

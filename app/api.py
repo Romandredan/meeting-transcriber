@@ -68,6 +68,10 @@ class ReplicaEditIn(BaseModel):
     text: str
 
 
+class TitleIn(BaseModel):
+    title: str
+
+
 class SpeakerAliasIn(BaseModel):
     label: str
     name: str = ""
@@ -91,6 +95,15 @@ def _load_result(row) -> TranscriptResult:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return TranscriptResult.from_dict(data)
+
+
+def _display_base(row) -> str:
+    """Основа имени файла при скачивании: title, если задан, иначе basename
+    исходника. Сам файл на диске не переименовывается — меняется только
+    Content-Disposition. Разделители пути вычищаем: они законны в title,
+    но не в имени файла."""
+    base = row["title"] or os.path.splitext(row["filename"])[0]
+    return re.sub(r"[\\/]+", "-", base).strip() or f"job_{row['id']}"
 
 
 def create_app(conn, broker, settings_state) -> FastAPI:
@@ -206,7 +219,9 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         path = os.path.join(row["output_dir"], f"{base}.{fmt}")
         if not os.path.isfile(path):
             raise HTTPException(404, "формат недоступен")
-        return FileResponse(path, filename=os.path.basename(path))
+        # Отдаём под отображаемым названием (title): FileResponse сам
+        # проставит filename* для кириллицы.
+        return FileResponse(path, filename=f"{_display_base(row)}.{fmt}")
 
     @app.get("/api/jobs/{job_id}/download_zip")
     def download_zip(job_id: int):
@@ -218,9 +233,12 @@ def create_app(conn, broker, settings_state) -> FastAPI:
             for name in os.listdir(row["output_dir"]):
                 zf.write(os.path.join(row["output_dir"], name), name)
         buf.seek(0)
+        name = f"{_display_base(row)}.zip"
         return StreamingResponse(
             buf, media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="job_{job_id}.zip"'})
+            headers={"Content-Disposition":
+                     f'attachment; filename="job_{job_id}.zip"; '
+                     f"filename*=UTF-8''{quote(name)}"})
 
     @app.get("/api/events")
     def events():
@@ -417,6 +435,21 @@ def create_app(conn, broker, settings_state) -> FastAPI:
                                   speakers.get_aliases(conn, job_id))
         return {"ok": True}
 
+    @app.patch("/api/jobs/{job_id}/title")
+    def patch_title(job_id: int, body: TitleIn):
+        """Отображаемое название встречи. Сырой filename не трогаем: он ключ к
+        исходнику на диске (processed/, плеер, выходные файлы). Пустая строка —
+        сброс к имени файла. FTS не переиндексируем: индекс хранит реплики и
+        анализы, не названия встреч."""
+        row = job_queue.get(conn, job_id)
+        if row is None:
+            raise HTTPException(404, "встреча не найдена")
+        title = body.title.strip()
+        if len(title) > 200:
+            raise HTTPException(400, "название длиннее 200 символов — сократите его")
+        job_queue.set_title(conn, job_id, title)
+        return {"ok": True, "title": title}
+
     @app.get("/api/search")
     def global_search(q: str = "", limit: int = 50, all: bool = False):
         """Полнотекстовый поиск по репликам всех встреч и результатам анализов
@@ -520,7 +553,7 @@ def create_app(conn, broker, settings_state) -> FastAPI:
             # Из БД, а не с диска: на диске лежит только последняя версия по метке,
             # а качать можно и старую.
             job = job_queue.get(conn, row["job_id"])
-            base = os.path.splitext(job["filename"])[0] if job else f"analysis_{analysis_id}"
+            base = _display_base(job) if job else f"analysis_{analysis_id}"
             name = f"{base}.{row['label']}.md"
             return Response(
                 content=row["result_md"], media_type="text/markdown; charset=utf-8",

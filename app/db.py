@@ -140,11 +140,22 @@ def _m004_analyses_edited(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE analyses ADD COLUMN edited INTEGER NOT NULL DEFAULT 0")
 
 
+def _m005_jobs_title(conn: sqlite3.Connection) -> None:
+    # Отображаемое название встречи: filename — ключ к исходнику на диске и
+    # потому неизменен, а понятное имя («Дейлик по ОРВ») живёт отдельно и
+    # применяется на чтении — тот же приём, что у speaker_aliases.
+    # Пустая строка = алиаса нет, показываем filename.
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(jobs)")]
+    if "title" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "таблица speaker_aliases — имена и объединения спикеров", _m001_speaker_aliases),
     (2, "transcripts в БД + FTS5-индекс поиска", _m002_transcripts_fts),
     (3, "jobs.processed_path — фактическое расположение исходника", _m003_jobs_processed_path),
     (4, "analyses.edited — пометка ручной правки версии", _m004_analyses_edited),
+    (5, "jobs.title — отображаемое название встречи", _m005_jobs_title),
 ]
 
 SCHEMA_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0

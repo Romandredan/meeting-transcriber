@@ -180,6 +180,15 @@ def test_search_endpoint(tmp_path):
     assert body["total"] == {"analysis": 0, "replica": 1}
 
 
+def test_search_shows_title_when_set(tmp_path):
+    """В выдаче поиска — отображаемое название встречи, если оно задано."""
+    client, conn = make_client(tmp_path)
+    jid, _ = done_job(conn, tmp_path)
+    job_queue.set_title(conn, jid, "Дейлик по ОРВ")
+    r = client.get("/api/search", params={"q": "возврат"})
+    assert r.json()["hits"][0]["filename"] == "Дейлик по ОРВ"
+
+
 def test_search_totals_exceed_shown(tmp_path):
     """Счётчики — полные, даже когда выдача урезана лимитом («X из Y»)."""
     conn = make_conn(tmp_path)

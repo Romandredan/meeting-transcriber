@@ -86,6 +86,16 @@ def get(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
 
 
+def display_title(row: sqlite3.Row) -> str:
+    """Название встречи для показа: осмысленный title, а если его нет — имя файла."""
+    return row["title"] or row["filename"]
+
+
+def set_title(conn: sqlite3.Connection, job_id: int, title: str) -> None:
+    conn.execute("UPDATE jobs SET title=? WHERE id=?", (title, job_id))
+    conn.commit()
+
+
 def list_jobs(conn: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)

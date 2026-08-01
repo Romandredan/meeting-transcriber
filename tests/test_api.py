@@ -323,3 +323,58 @@ def test_analyze_disabled_hides_routes(tmp_path, monkeypatch):
     jid = done_job_with_transcript(conn, tmp_path)
     assert client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"}).status_code == 404
     assert client.get("/api/llm/health").json() == {"enabled": False}
+
+
+
+# ── отображаемое название встречи (title) ────────────────────────────────────
+
+def test_patch_title(tmp_path):
+    client, conn = make_client(tmp_path)
+    f = tmp_path / "a.mp4"; f.write_bytes(b"x")
+    jid = client.post("/api/jobs", json={"path": str(f), "settings": {}}).json()["id"]
+    r = client.patch(f"/api/jobs/{jid}/title", json={"title": "  Дейлик по ОРВ  "})
+    assert r.status_code == 200
+    assert r.json()["title"] == "Дейлик по ОРВ"
+    assert client.get(f"/api/jobs/{jid}").json()["title"] == "Дейлик по ОРВ"
+    # Пустая строка — сброс к имени файла.
+    r = client.patch(f"/api/jobs/{jid}/title", json={"title": "   "})
+    assert r.status_code == 200
+    assert client.get(f"/api/jobs/{jid}").json()["title"] == ""
+
+
+def test_patch_title_validation(tmp_path):
+    client, conn = make_client(tmp_path)
+    f = tmp_path / "a.mp4"; f.write_bytes(b"x")
+    jid = client.post("/api/jobs", json={"path": str(f), "settings": {}}).json()["id"]
+    assert client.patch(f"/api/jobs/{jid}/title",
+                        json={"title": "я" * 201}).status_code == 400
+    assert client.patch("/api/jobs/999/title", json={"title": "x"}).status_code == 404
+
+
+def test_download_uses_display_title(tmp_path):
+    """Скачивание отдаёт файл под отображаемым названием (Content-Disposition),
+    сам файл на диске не переименовывается."""
+    client, conn = make_client(tmp_path)
+    jid = done_job_with_transcript(conn, tmp_path)
+    # Без title — имя исходника.
+    r = client.get(f"/api/jobs/{jid}/download/json")
+    assert r.status_code == 200
+    assert 'filename="a.json"' in r.headers["content-disposition"]
+    client.patch(f"/api/jobs/{jid}/title", json={"title": "Дейлик по ОРВ"})
+    r = client.get(f"/api/jobs/{jid}/download/json")
+    assert "Дейлик" not in r.headers["content-disposition"]  # кириллица — в filename*
+    from urllib.parse import quote
+    assert quote("Дейлик по ОРВ.json") in r.headers["content-disposition"]
+    r = client.get(f"/api/jobs/{jid}/download_zip")
+    assert quote("Дейлик по ОРВ.zip") in r.headers["content-disposition"]
+
+
+def test_analysis_download_uses_display_title(tmp_path):
+    from urllib.parse import quote
+    client, conn = make_client(tmp_path)
+    jid = done_job_with_transcript(conn, tmp_path)
+    client.patch(f"/api/jobs/{jid}/title", json={"title": "Дейлик по ОРВ"})
+    aid = analyses.enqueue(conn, jid, "protocol", "Протокол", "п", "m")
+    analyses.update(conn, aid, status="done", result_md="# Итог")
+    r = client.get(f"/api/analyses/{aid}/download")
+    assert quote("Дейлик по ОРВ.protocol.md") in r.headers["content-disposition"]
