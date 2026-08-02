@@ -96,13 +96,29 @@ def set_title(conn: sqlite3.Connection, job_id: int, title: str) -> None:
     conn.commit()
 
 
-def list_jobs(conn: sqlite3.Connection, limit: int = 200) -> list[sqlite3.Row]:
+# Условие «у встречи есть анализ с этой меткой» (статус любой) — серверный
+# фильтр списка встреч по типу анализа. EXISTS, а не JOIN: у встречи может
+# быть несколько версий анализа одной метки, JOIN задублировал бы строки.
+_ANALYSIS_FILTER = ("EXISTS (SELECT 1 FROM analyses a "
+                    "WHERE a.job_id = jobs.id AND a.label = ?)")
+
+
+def list_jobs(conn: sqlite3.Connection, limit: int = 200,
+              analysis: str | None = None) -> list[sqlite3.Row]:
+    if analysis:
+        return conn.execute(
+            f"SELECT * FROM jobs WHERE {_ANALYSIS_FILTER} "
+            "ORDER BY id DESC LIMIT ?", (analysis, limit)).fetchall()
     return conn.execute(
         "SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
 
 
-def count_jobs(conn: sqlite3.Connection) -> int:
+def count_jobs(conn: sqlite3.Connection, analysis: str | None = None) -> int:
+    if analysis:
+        return int(conn.execute(
+            f"SELECT COUNT(*) c FROM jobs WHERE {_ANALYSIS_FILTER}",
+            (analysis,)).fetchone()["c"])
     return int(conn.execute("SELECT COUNT(*) c FROM jobs").fetchone()["c"])
 
 

@@ -320,6 +320,7 @@ def test_analyze_disabled_hides_routes(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ANALYZE_ENABLED", False)
     client, conn = make_client(tmp_path)
     assert client.get("/api/templates").status_code == 404
+    assert client.get("/api/analysis_labels").status_code == 404
     jid = done_job_with_transcript(conn, tmp_path)
     assert client.post(f"/api/jobs/{jid}/analyses", json={"label": "protocol"}).status_code == 404
     assert client.get("/api/llm/health").json() == {"enabled": False}
@@ -378,3 +379,41 @@ def test_analysis_download_uses_display_title(tmp_path):
     analyses.update(conn, aid, status="done", result_md="# Итог")
     r = client.get(f"/api/analyses/{aid}/download")
     assert quote("Дейлик по ОРВ.protocol.md") in r.headers["content-disposition"]
+
+
+# ── фильтр встреч по типу анализа ────────────────────────────────────────────
+
+def _mkjob(client, tmp_path, name):
+    f = tmp_path / name; f.write_bytes(b"x")
+    return client.post("/api/jobs", json={"path": str(f), "settings": {}}).json()["id"]
+
+
+def test_jobs_filter_by_analysis_label(tmp_path):
+    client, conn = make_client(tmp_path)
+    j1 = _mkjob(client, tmp_path, "a.mp4")
+    j2 = _mkjob(client, tmp_path, "b.mp4")
+    # queued тоже считается: фильтр — «есть анализ этого типа», статус любой.
+    analyses.enqueue(conn, j1, "protocol", "Протокол", "п", "m")
+    analyses.enqueue(conn, j2, "daily", "Дейлик", "д", "m")
+    r = client.get("/api/jobs", params={"analysis": "protocol"}).json()
+    assert [j["id"] for j in r["jobs"]] == [j1]
+    assert r["total"] == 1
+    # Метка без анализов — пустой список и честный total.
+    r = client.get("/api/jobs", params={"analysis": "nope"}).json()
+    assert r["jobs"] == [] and r["total"] == 0
+    # Без параметра — как раньше.
+    assert client.get("/api/jobs").json()["total"] == 2
+
+
+def test_analysis_labels_endpoint(tmp_path):
+    client, conn = make_client(tmp_path)
+    j1 = _mkjob(client, tmp_path, "a.mp4")
+    j2 = _mkjob(client, tmp_path, "b.mp4")
+    analyses.enqueue(conn, j1, "protocol", "Протокол", "п", "m")
+    analyses.enqueue(conn, j1, "protocol", "Протокол v2", "п", "m")  # вторая версия — та же встреча
+    analyses.enqueue(conn, j2, "protocol", "Протокол v2", "п", "m")
+    analyses.enqueue(conn, j2, "daily", "Дейлик", "д", "m")
+    labels = {r["label"]: r for r in client.get("/api/analysis_labels").json()}
+    assert labels["protocol"]["count"] == 2                  # встречи, а не версии
+    assert labels["protocol"]["display_name"] == "Протокол v2"  # от свежей записи
+    assert labels["daily"]["count"] == 1

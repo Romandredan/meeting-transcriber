@@ -75,6 +75,22 @@ def list_for_job(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def list_labels(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Метки анализов для фильтра списка встреч по типу анализа.
+
+    Источник — сами записи анализов, а не шаблоны: фильтр должен работать и по
+    анализам уже удалённых/выключенных шаблонов. display_name берём от самой
+    свежей записи с меткой, count — число ВСТРЕЧ с таким анализом (статус любой:
+    «в очереди» и «ошибка» тоже считаются — таков выбор семантики фильтра)."""
+    return conn.execute("""
+        SELECT a.label, a.display_name, c.cnt AS count
+        FROM analyses a
+        JOIN (SELECT label, MAX(id) AS mid, COUNT(DISTINCT job_id) AS cnt
+              FROM analyses GROUP BY label) c ON a.id = c.mid
+        ORDER BY c.cnt DESC, a.label
+    """).fetchall()
+
+
 def delete(conn: sqlite3.Connection, analysis_id: int) -> None:
     conn.execute("DELETE FROM analyses WHERE id=?", (analysis_id,))
     conn.commit()

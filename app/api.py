@@ -168,13 +168,18 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         return {"id": jid}
 
     @app.get("/api/jobs")
-    def list_jobs(limit: int = 50):
+    def list_jobs(limit: int = 50, analysis: str = ""):
         # Страничная выдача: UI опрашивает первую страницу каждые 5 с и
         # увеличивает limit кнопкой «Показать ещё» — поэтому вместе со
         # списком отдаём полное число встреч.
+        # analysis=<метка> — серверный фильтр «есть анализ этого типа»
+        # (статус любой): клиентский фильтр по странице врал бы про
+        # незагруженные встречи. total — тоже фильтрованный, иначе
+        # «Показать ещё N из M» врёт.
         limit = max(1, min(limit, 500))
-        return {"jobs": [dict(r) for r in job_queue.list_jobs(conn, limit)],
-                "total": job_queue.count_jobs(conn)}
+        label = analysis.strip() or None
+        return {"jobs": [dict(r) for r in job_queue.list_jobs(conn, limit, label)],
+                "total": job_queue.count_jobs(conn, label)}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: int):
@@ -485,6 +490,11 @@ def create_app(conn, broker, settings_state) -> FastAPI:
         @app.get("/api/templates")
         def list_templates():
             return [dict(r) for r in templates_store.list_templates(conn)]
+
+        @app.get("/api/analysis_labels")
+        def analysis_labels():
+            """Метки анализов для дропдауна фильтра встреч по типу анализа."""
+            return [dict(r) for r in analyses.list_labels(conn)]
 
         @app.post("/api/templates")
         def create_template(body: TemplateIn):

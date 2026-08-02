@@ -49,6 +49,7 @@ const S = {
   uploads: [],                // идущие/упавшие загрузки: { key, name, status, error }
   uploadSeq: 0,
   jobsLimit: 50,              // размер страницы списка встреч (растёт кнопкой «Показать ещё»)
+  anLabel: "",                // серверный фильтр списка: только встречи с анализом этой метки ("" — все)
   jobsTotal: 0,               // полное число встреч на сервере
   inflight: new Set(),
   form: null,                 // черновик шаблона: { id, label, name, desc, body, enabled }
@@ -370,11 +371,13 @@ async function saveTemplate() {
 
 async function refreshJobs() {
   let data;
-  try { data = await api(`/api/jobs?limit=${S.jobsLimit}`); }
+  const an = S.anLabel ? `&analysis=${encodeURIComponent(S.anLabel)}` : "";
+  try { data = await api(`/api/jobs?limit=${S.jobsLimit}${an}`); }
   catch { setOffline(true); return; }
   const jobs = data.jobs || [];
   S.jobs = jobs;
   S.jobsTotal = data.total ?? jobs.length;
+  loadAnalysisLabels();
   const work = jobs.filter((j) => j.status === "processing" || j.status === "queued").length;
   $("#queue-status").textContent = work
     ? "GPU занят · " + work + " в работе"
@@ -389,6 +392,31 @@ async function refreshJobs() {
     el.textContent = ({ all: "Все ", work: "В работе ", done: "Готово ", cancelled: "Отменённые ", error: "Ошибки " })[k] + n;
   });
   renderQueue();
+}
+
+// Варианты фильтра «Тип анализа»: метки из записей анализов (не шаблонов —
+// фильтр работает и по анализам удалённых шаблонов). Вызывается из refreshJobs
+// (опрос каждые 5 с), поэтому опции перерисовываем ТОЛЬКО при изменении —
+// иначе опрос закрывал бы открытый список и сбивал навигацию с клавиатуры.
+async function loadAnalysisLabels() {
+  const sel = $("#analysis-filter");
+  if (!sel) return;
+  if (!S.llm.enabled) { sel.hidden = true; return; }
+  let labels;
+  try { labels = await api("/api/analysis_labels"); }
+  catch { return; }   // анализ выключен/сервер старый — оставляем как есть
+  sel.hidden = false;
+  const sig = labels.map((l) => `${l.label}=${l.display_name}:${l.count}`).join(",");
+  if (sel.dataset.sig === sig) { sel.value = S.anLabel; return; }
+  sel.dataset.sig = sig;
+  // Выбранная метка исчезла (анализы удалили) — сбрасываем фильтр.
+  if (S.anLabel && !labels.some((l) => l.label === S.anLabel)) {
+    S.anLabel = "";
+    refreshJobs();
+  }
+  sel.innerHTML = `<option value="">Тип анализа: все</option>` +
+    labels.map((l) => `<option value="${esc(l.label)}">${esc(l.display_name)} (${l.count})</option>`).join("");
+  sel.value = S.anLabel;
 }
 
 function visibleJobs() {
@@ -1701,6 +1729,12 @@ document.addEventListener("input", (ev) => {
 
 document.addEventListener("change", (ev) => {
   const t = ev.target;
+  if (t.id === "analysis-filter") {
+    // Серверный фильтр списка по типу анализа: перезапрашиваем первую страницу.
+    S.anLabel = t.value;
+    refreshJobs();
+    return;
+  }
   if (t.id === "auto-analyze") {
     S.settings.auto_analyze = t.value;
     saveSettingsSoon();
